@@ -1,0 +1,84 @@
+# ============================================================================
+#  Dev Test Range -- the only map carrying every vehicle in the game.
+#  Flat and open on purpose: handling, ballistics and effects are all easy
+#  to read with nothing in the way. Single player starts in god mode here.
+#
+#  car   <x> <z> <y> <turn 0-3> <kind 0 saloon 1 van 3 supercar> <r> <g> <b>
+#  tank  <x> <z> <y> <turn 0-3> <r> <g> <b>
+#  heli  <x> <z> <y> <turn 0-3> <r> <g> <b>
+#  E to get in, WASD to drive or fly, SPACE or E to get out.
+# ============================================================================
+
+name Dev Test Range
+size 3400 3400
+ground floor 128
+fog 40 56 66 900 3600
+sky 30 40 50
+
+# --------------------------------------------------------------- perimeter
+wall 0 0 3400 0 0 300 80 concrete 64
+wall 0 3400 3400 3400 0 300 80 concrete 64
+wall 0 0 0 3400 0 300 80 concrete 64
+wall 3400 0 3400 3400 0 300 80 concrete 64
+
+# ------------------------------------------------------------ vehicle line
+box 520 0 1080 240 2 900 stone2 64
+box 520 0 2040 300 2 620 stone2 64
+car 620 1140 0 0 0 168 172 178
+car 620 1280 0 0 0 150 34 30
+car 620 1420 0 0 0 28 52 120
+car 620 1560 0 0 1 40 44 40
+car 620 1700 0 0 3 235 232 226
+car 620 1840 0 0 3 236 190 40
+tank 660 2120 0 0 92 98 74
+tank 660 2300 0 0 70 76 58
+# Gunships, on their own pads clear of everything else.
+heli 700 2560 0 0 84 90 96
+heli 700 2860 0 0 64 70 78
+box 600 0 2460 200 3 200 metal 64
+box 600 0 2760 200 3 200 metal 64
+
+# -------------------------------------------------------------- the circuit
+box 1100 0 900 1600 8 24 stone 48
+box 1100 0 2300 1600 8 24 stone 48
+box 1100 0 900 24 8 1424 stone 48
+box 2676 0 900 24 8 1424 stone 48
+box 1500 0 1200 30 26 260 crate2 40
+box 1900 0 1900 30 26 260 crate2 40
+box 2300 0 1200 30 26 260 crate2 40
+stairs 1250 1520 200 160 0 60 0 10 metal
+box 1450 60 1520 90 6 160 metal 48
+
+# -------------------------------------------------------------- gun range
+# Targets at 200, 450 and 900 units from the line, for checking hole fade,
+# tracer travel and fly-by timing.
+box 1660 0 2900 8 60 60 wall_b 32
+box 1910 0 2900 8 60 60 wall_b 32
+box 2360 0 2900 8 60 60 wall_b 32
+box 1600 0 2980 800 4 12 stone2 32
+box 1580 0 2700 340 4 30 stone 32
+
+# ---------------------------------------------------- step-up test + tower
+stairs 2900 1000 120 240 0 60 2 10 stone2
+stairs 2900 1300 120 240 0 80 2 10 wall_c
+building 2750 1800 300 300 0 3 46 concrete stone2
+
+# ------------------------------------------------------------- cover props
+box 1300 0 1700 60 60 60 crate 60
+box 1360 0 1700 60 60 60 crate 60
+box 1300 56 1700 60 60 60 crate 60
+box 2000 0 1150 90 34 140 tech 48
+box 2450 0 2000 100 110 60 tech2 64
+box 1100 0 2000 40 120 40 pillar 40
+box 1100 0 1150 40 120 40 pillar 40
+
+# ------------------------------------------------------------------ spawns
+spawn 820 4 1500 180
+spawn 820 4 1800 180
+spawn 820 4 2700 180
+spawn 1600 4 2600 90
+spawn 1700 4 1600 0
+spawn 2400 4 1600 180
+spawn 1700 4 1100 270
+spawn 2800 4 2800 225
+spawn 1000 4 2900 315
