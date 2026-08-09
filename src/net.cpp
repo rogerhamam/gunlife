@@ -761,7 +761,7 @@ void Server::UpdateBots() {
           if (heavy == WEAPON_GRENADE)
             aim = Vector3Normalize(
                 Vector3Add(aim, Vector3{0.0f, 0.18f + dist / 4000.0f, 0.0f}));
-          const float sp = 3.0f - s.botSkill * 1.8f;
+          const float sp = (3.0f - s.botSkill * 1.8f) * kSpreadScale;
           aim = Vector3Normalize(Vector3Add(
               aim, Vector3{RandRange(-sp, sp) * 0.017f,
                            RandRange(-sp, sp) * 0.017f,
@@ -794,7 +794,7 @@ void Server::UpdateBots() {
           // 4.2 degrees of cone at the bottom of the curve down to 1.1 at the
           // top -- enough that early waves are survivable in the open and
           // late ones are not.
-          const float spread = 4.2f - s.botSkill * 3.1f;
+          const float spread = (4.2f - s.botSkill * 3.1f) * kSpreadScale;
           const float yj = s.state.yaw + RandRange(-spread, spread);
           const float pj = s.state.pitch + RandRange(-spread, spread);
           const Vector3 dir = ForwardFromAngles(yj, pj);

@@ -41,7 +41,9 @@ float LocalPlayer::CurrentSpread() const {
   if (!onGround) s += 4.0f;             // jumping wrecks accuracy
   if (crouch) s *= 0.55f;
   if (d.canZoom && zoomT > 0.5f) s = d.zoomSpread + d.moveSpread * moveT * 0.25f;
-  return s;
+  // One scale over the lot, so the airborne penalty and the scoped figure
+  // tighten with everything else rather than being left behind.
+  return s * kSpreadScale;
 }
 
 void LocalPlayer::ApplyRecoil(float degrees) {

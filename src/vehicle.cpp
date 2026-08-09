@@ -52,9 +52,10 @@ const VehicleDef kDefs[] = {
      260.0f, 6.0f, 64.0f},
 };
 
-// GTJ3D's obj_enemy helicopter block, verbatim: it climbed until z reached
-// 120 and settled back down above it, and never exceeded 1 unit per step.
-constexpr float kHeliHover = 120.0f;
+// GTJ3D's obj_enemy helicopter block: it never exceeded 1 unit of climb per
+// step. Its fixed 120-unit hover ceiling is gone -- right for something the
+// AI flies itself to, wrong for something a player is holding a collective
+// on, which should hold whatever height it is put at.
 constexpr float kHeliClimbAccel = 0.01f;
 constexpr float kHeliMaxClimb = 1.0f;
 
@@ -302,43 +303,55 @@ void VehicleSystem::Tick(World& world, int driven, const DriveInput& in) {
                                               v.pos.y + 30.0f);
       const float alt = v.pos.y - ground;
 
-      // The mouse flies it: heading is where the nose points, and how far the
-      // nose is tipped is what pulls it along.
-      if (in.haveAir) {
-        v.dirDeg = in.heading;
-        v.pitchDeg += (in.pitch - v.pitchDeg) * 0.18f;
-      }
+      // The mouse yaws the airframe -- the nose goes where you look. Its
+      // pitch is look only: tying the machine's attitude to where you were
+      // looking meant you could not glance down without diving, and could not
+      // fly forward without staring at the floor.
+      if (in.haveAir) v.dirDeg = in.heading;
 
-      // Collective on W/S. Below the hover ceiling it wants to climb on its
-      // own, exactly as GTJ3D's did, so it lifts off the moment the rotor is
-      // up to speed rather than needing to be flown off the deck.
+      // --- cyclic, on W/S ---------------------------------------------------
+      // Tipping the rotor disc is what moves a helicopter, so W puts the nose
+      // down and S brings it up. `pitchDeg` is positive nose-down: the body is
+      // drawn after a 180 degree yawFix, so its nose is model -X and a
+      // positive rotation about +Z tips that end toward the ground.
+      constexpr float kNoseDown = 26.0f;   // full forward cyclic
+      constexpr float kNoseUp = -20.0f;    // full aft cyclic, which also brakes
+      float wantPitch = 0.0f;
+      if (in.fwd) wantPitch = kNoseDown;
+      else if (in.back) wantPitch = kNoseUp;
+      // Eased, not snapped: the disc takes a moment to tilt, and that lag is
+      // most of what makes it feel like an aircraft rather than a camera.
+      v.pitchDeg += (wantPitch - v.pitchDeg) * 0.07f;
+
+      // Bank on A/D, which is what slides it sideways.
+      float slide = 0.0f;
+      if (in.left) { slide = -1.0f; v.rollDeg += (-20.0f - v.rollDeg) * 0.09f; }
+      else if (in.right) { slide = 1.0f; v.rollDeg += (20.0f - v.rollDeg) * 0.09f; }
+      else v.rollDeg *= 0.92f;
+
+      // --- collective, on Space / Ctrl -------------------------------------
       float climb = 0.0f;
       // Climb authority falls away with height, so there is a service ceiling
       // rather than an open door to orbit.
       const float lift = Clampf(1.0f - (alt - 700.0f) / 500.0f, 0.0f, 1.0f);
-      if (in.fwd) climb += kHeliClimbAccel * 3.4f * lift;
-      if (in.back) climb -= kHeliClimbAccel * 3.4f;
+      if (in.climb) climb += kHeliClimbAccel * 3.6f * lift;
+      if (in.sink) climb -= kHeliClimbAccel * 3.6f;
       if (fabsf(climb) < 1e-5f) {
-        if (alt < kHeliHover) climb += kHeliClimbAccel;
-        else if (v.vy > 0.0f) climb -= kHeliClimbAccel;
-        else climb -= kHeliClimbAccel * 0.35f;   // gentle settle
+        // Hands off the collective, it holds the height it is at. GTJ3D's
+        // climbed to a fixed ceiling on its own, which is right for something
+        // the AI flies and wrong for something you are holding.
+        v.vy *= 0.90f;
+        // ...except off the deck, where it lifts itself clear rather than
+        // grinding along the ground the moment the rotor is up to speed.
+        if (alt < 26.0f) climb += kHeliClimbAccel * 1.4f;
       }
       v.vy = Clampf((v.vy + climb) * 0.985f, -kHeliMaxClimb * 2.2f,
                     kHeliMaxClimb * 2.2f);
       v.vy *= v.spool;                            // no lift without rpm
 
       // Nose-down converts into forward speed; nose-up brakes and backs up.
-      // `pitchDeg` is positive nose-down: the body is drawn after a 180 degree
-      // yawFix, so its nose is model -X and a positive rotation about +Z tips
-      // that end toward the ground. Getting this sign the wrong way round flew
-      // the gunship backwards out of a dive.
       const float want = v.pitchDeg / 45.0f * maxSpeed_[i];
       v.speed += (want - v.speed) * 0.05f;
-      // Bank with the strafe keys, which slides it sideways.
-      float slide = 0.0f;
-      if (in.left) { slide = -1.0f; v.rollDeg += (-18.0f - v.rollDeg) * 0.12f; }
-      else if (in.right) { slide = 1.0f; v.rollDeg += (18.0f - v.rollDeg) * 0.12f; }
-      else v.rollDeg *= 0.9f;
 
       // Thrust follows the airframe, not the compass. A rotor pushes at right
       // angles to its disc, so tipping the nose down drives it forward *and*
@@ -362,6 +375,15 @@ void VehicleSystem::Tick(World& world, int driven, const DriveInput& in) {
 
       // Nothing fancy for collision in the air: refuse to enter solid, and
       // never sink through the ground.
+      //
+      // Take our own collider out of the world before testing. A vehicle
+      // pushes its bounding box into the world every tick so that collision
+      // and raycasts treat it as solid -- and the gunship was then testing
+      // itself against that box, failing every single tick, and having its
+      // x and z reverted. Vertical movement is not gated by this test, which
+      // is exactly why the machine could climb and descend and do nothing
+      // else. The car branch has always cleared them; this one never did.
+      world.SetVehicleColliders({});
       const float g2 = world.GroundHeight(next.x, next.z, d.width * 0.4f,
                                           next.y + 30.0f);
       if (next.y < g2) { next.y = g2; if (v.vy < 0.0f) v.vy = 0.0f; }

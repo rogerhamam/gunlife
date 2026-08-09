@@ -328,7 +328,7 @@ void Game::ResolveHostileFire() {
       // Gunship minigun: a hitscan round with a tracer, and a bite of damage
       // if it lands on you.
       const WeaponDef& d = Weapon(WEAPON_RIFLE);
-      const float spread = 2.4f;
+      const float spread = 2.4f * kSpreadScale;
       const Vector3 j = Vector3Normalize(Vector3Add(
           dir, Vector3{RandRange(-spread, spread) * 0.017f,
                        RandRange(-spread, spread) * 0.017f,
@@ -763,7 +763,13 @@ void Game::Tick() {
     // in an automated run.
     cmd.moveForward = 1.0f;
     if (drivingVehicle_ < 0 && nearVehicle_ >= 0) cmd.usePressed = true;
-    if (drivingVehicle_ >= 0) cmd.moveStrafe = 1.0f;   // hold a right-hand lock
+    if (drivingVehicle_ >= 0) {
+      cmd.moveStrafe = 1.0f;                          // hold a right-hand lock
+      // The gunship climbs on the collective, not the throttle, so an
+      // automated run has to hold Space to gain any height. Only in the air:
+      // on the ground Space is the door, and the run would eject itself.
+      if (InHeli()) cmd.jump = true;
+    }
   }
 
   if (client_.haveSelf()) {
@@ -1302,7 +1308,12 @@ void Game::TickVehicles(const InputCommand& in) {
 
   // --- getting out --------------------------------------------------------
   if (drivingVehicle_ >= 0 && enterTimer_ == 0) {
-    const bool bail = in.jump || in.usePressed || lp_.dead ||
+    // Space is the gunship's collective, so it cannot also be the door --
+    // every attempt to climb would have thrown you out of the aircraft. E
+    // only, in the air.
+    const bool flying = vehicles_.list()[drivingVehicle_].kind == VEH_HELI;
+    const bool bail = (flying ? in.usePressed : (in.jump || in.usePressed)) ||
+                      lp_.dead ||
                       vehicles_.list()[drivingVehicle_].life <= 0.0f;
     if (bail) {
       Vehicle& v = vehicles_.list()[drivingVehicle_];
@@ -1358,7 +1369,13 @@ void Game::TickVehicles(const InputCommand& in) {
   if (enterTimer_ > 0) {
     if (--enterTimer_ == 0) {
       assets_.Play("car_start", 0.65f);
-      SetMessage("SPACE or E to get out", 2.5f);
+      if (drivingVehicle_ >= 0 &&
+          vehicles_.list()[drivingVehicle_].kind == VEH_HELI) {
+        SetMessage("W/S pitch   A/D bank   SPACE/CTRL collective   E to get out",
+                   5.0f);
+      } else {
+        SetMessage("SPACE or E to get out", 2.5f);
+      }
     }
     vehicles_.Tick(world_, -1, di);
     if (drivingVehicle_ >= 0) lp_.pos = vehicles_.SeatPos(drivingVehicle_);
@@ -1377,9 +1394,13 @@ void Game::TickVehicles(const InputCommand& in) {
     if (vehicles_.list()[drivingVehicle_].kind == VEH_HELI) {
       di.haveAir = true;
       di.heading = lp_.yaw;
-      // Positive is nose-down, which is what pulls it forward, so looking
-      // down flies you forward and looking up brakes and backs off.
-      di.pitch = Clampf(-lp_.viewPitch(), -30.0f, 38.0f);
+      // W/S are the cyclic and Space/Ctrl the collective, so the four
+      // movement keys already read above mean what they mean on foot: W is
+      // forward. They used to be the collective, with forward thrust taken
+      // from how far down you were looking -- which left W and S doing
+      // nothing but up and down.
+      di.climb = in.jump;
+      di.sink = in.crouch;
     }
   } else {
     driveTurning_ = 0;
@@ -1639,7 +1660,7 @@ void Game::TryFireHeli(bool pressed, bool held) {
   fx_.EjectCasing(hard, aim, 1.3f);
   AddFlashLight(hard, Vector3{1.2f, 0.85f, 0.4f}, 180.0f, 0.04f);
 
-  const float spread = 0.7f;
+  const float spread = 0.7f * kSpreadScale;
   const Vector3 sdir = ForwardFromAngles(lp_.yaw + RandRange(-spread, spread),
                                          lp_.viewPitch() + RandRange(-spread, spread));
   const RayHit wh = world_.Raycast(eye, sdir, 2600.0f);
@@ -1732,7 +1753,7 @@ void Game::TryFireTank(bool pressed, bool held) {
   // exactly where the crosshair is -- the tracer just leaves from the barrel
   // and converges on the same point.
   const Vector3 eye = lp_.eyePos();
-  const float spread = 0.5f;
+  const float spread = 0.5f * kSpreadScale;
   const Vector3 sdir = ForwardFromAngles(lp_.yaw + RandRange(-spread, spread),
                                          lp_.viewPitch() + RandRange(-spread, spread));
   const RayHit wh = world_.Raycast(eye, sdir, 2200.0f);

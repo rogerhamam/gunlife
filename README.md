@@ -42,8 +42,12 @@ staged. See *Assets*.
 | `R` | reload |
 | `Tab` | scoreboard |
 | `M` | toggle the GTJ3D soundtrack |
+| `E` | get into / out of a vehicle |
 | `Esc` | release the mouse, again for the menu |
 | `F11` | fullscreen |
+
+In a car the same keys drive it. The gunship rebinds them — see *Flying the
+gunship*.
 
 ### Story mode
 
@@ -147,6 +151,14 @@ Flags: `--sp`, `--story`, `--storywave <n>`, `--host`, `--connect <ip>`,
 Fire rates are GTJ3D's `gun_reload(n)` cooldowns in 60 Hz ticks. Damage is
 scaled up from GTJ's numbers so a 100 HP deathmatch plays like CS; head shots
 do ×4 and leg shots ×0.75.
+
+Every cone of fire in the game runs through `kSpreadScale`, currently **0.80**
+— a flat 20 % tightening applied everywhere spread is used: the player's
+weapons including the airborne penalty, the crouch bonus and the scoped figure,
+the bots' rifles, the aim they lead grenades and rockets with, the tank's roof
+gun and both miniguns. It lives in one place rather than being baked into
+twenty numbers, so the table below still reads as the cone each weapon was
+*authored* with and the tuning stays one auditable knob.
 
 | # | Weapon | Mode | Damage | Cooldown | Mag | Notes |
 |---|---|---|---|---|---|---|
@@ -547,7 +559,35 @@ The same shell, with `box_height` back at 6 and frame 0 of the skin, is the
 stand-in when a vehicle's `.glb` is missing — which beats the hand-stacked
 boxes that used to fill in.
 
-### The gunship
+### Flying the gunship
+
+| Input | Action |
+|---|---|
+| `W` / `S` | cyclic — nose down / nose up, which is what flies it forward and back |
+| `A` / `D` | bank left / right, which slides it sideways |
+| `Space` | collective up — climb |
+| `Ctrl` / `C` | collective down — descend |
+| Mouse | look, and the nose follows your yaw |
+| `E` | get out — `Space` is the collective, so it cannot also be the door |
+| `1` / `2` | minigun / rocket pods |
+
+Tipping the rotor disc is what moves a helicopter, so `W` puts the nose down
+and the thrust follows the airframe. The tilt is eased rather than snapped: the
+disc takes a moment to come over, and that lag is most of what makes it feel
+like an aircraft rather than a camera. Hands off the collective it holds the
+height it is at, except off the deck, where it lifts itself clear rather than
+grinding along the ground once the rotor is up to speed.
+
+**It could only go up and down before, for two separate reasons.** The
+collective was on `W`/`S` and forward thrust was taken from *how far down you
+were looking* — so the only things `W` and `S` did were climb and descend, and
+flying anywhere meant staring at the floor while you did it. Underneath that,
+it could not move horizontally at all: a vehicle pushes its bounding box into
+the world every tick so collision and raycasts treat it as solid, and the
+gunship was testing itself against its own box, failing every tick, and having
+its x and z reverted. Vertical movement is not gated by that test, which is
+exactly why up and down were the only things that worked. The car branch had
+always cleared its own collider before testing; this one never did.
 
 The camera is welded to the airframe: the seat offset is carried by the whole
 attitude, pitch and roll included, not just the heading. With only the yaw
@@ -569,9 +609,7 @@ angles to its disc, so tipping the nose down drives it forward *and* down, and
 pulling up climbs as it brakes; a bank slips it toward the low wing. The
 earlier version took thrust along a flat heading vector and used the pitch
 only to scale it, so the nose could be pointing anywhere and the machine still
-slid along level ground. Nose-down is what pulls it along, so looking down
-flies you forward — that sign was inverted too, which flew it backwards out of
-a dive.
+slid along level ground.
 
 **Ordnance leaves the airframe before it arms.** A vehicle puts its bounding
 box into the world so collision and raycasts treat it as solid, and the wing
@@ -831,7 +869,10 @@ The vehicle and story runs are the ones sensitive to how long the machine
 takes to get going: the gunship run measures a pass by altitude, and it needs
 a second of door-and-start and two seconds of rotor spool-up before it climbs
 at all. A slow start eats into the 6.5-second deadline. If it reads a dozen
-units rather than a few hundred, run it again on its own before believing it.
+units rather than a hundred or more, run it again on its own before believing
+it. `--autodrive` holds the collective as well as the cyclic when it is in a
+gunship, because since the controls were rebound the throttle no longer
+climbs; on the ground it does not, since `Space` is the door there.
 
 Note: raylib refuses to write a screenshot to a path containing an apostrophe,
 and this folder has one — keep screenshot paths relative to the working

@@ -58,12 +58,26 @@ const VehicleDef& VehicleInfo(int kind);
 constexpr int kSwatSquad = 8;
 
 // What the driver is holding down this tick.
+//
+// The gunship reads the same four movement keys a car does, but as a cyclic
+// rather than a throttle:
+//
+//   W / S    nose down / nose up  -> fly forward / back
+//   A / D    bank left / right    -> slide sideways
+//   Space    collective up        -> climb
+//   Ctrl/C   collective down      -> descend
+//   Mouse    look, and the nose follows your yaw
+//   E        get out (Space is the collective, so it cannot also be the door)
+//
+// The previous scheme put the collective on W/S and took forward thrust from
+// how far *down you were looking*, which meant the only things W and S did
+// were up and down, and flying anywhere required staring at the floor.
 struct DriveInput {
   bool fwd = false, back = false, left = false, right = false;
-  // Helicopter: the mouse flies it. `heading` is where the nose should point
-  // and `pitch` is how far it is tipped, which is what drives it forward.
+  bool climb = false, sink = false;   // helicopter collective
+  // Where the nose should point. The mouse still yaws the airframe; its pitch
+  // is look only and no longer flies the machine.
   float heading = 0.0f;
-  float pitch = 0.0f;
   bool haveAir = false;
 };
 

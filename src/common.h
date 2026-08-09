@@ -52,6 +52,15 @@ constexpr float kLegMult    = 0.75f;
 constexpr float kMaxHealth = 100.0f;
 constexpr float kMaxArmor  = 100.0f;
 
+// Every cone of fire in the game is multiplied by this, everywhere it is
+// used: the player's weapons (including the airborne penalty, the crouch
+// bonus and the scoped figure), the bots' rifles, the aim they lead their
+// grenades and rockets with, the tank's roof gun and both miniguns. Applied
+// here rather than by rewriting twenty numbers in the weapon table, so the
+// figures there still read as the cone each weapon was *authored* with and
+// this stays one auditable knob.
+constexpr float kSpreadScale = 0.80f;
+
 // GTJ clamped pitch to +/-60. The brief asks for unrestricted look, so we only
 // stop short of straight up/down to keep the view matrix well defined.
 constexpr float kPitchLimit = 89.0f;
