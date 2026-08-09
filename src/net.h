@@ -144,6 +144,12 @@ bool ResolveHost(const std::string& host, uint16_t port, Endpoint* out);
 struct ServerSlot {
   bool used = false;
   bool bot = false;
+  // Dev god mode (F6), reported by the client on every input packet. The
+  // server owns health, so a client-side guard alone was not enough: bots and
+  // blasts still whittled the slot down and killed it, and the client only
+  // hid the result. Nothing on the server may take health off a slot flying
+  // this flag.
+  bool godMode = false;
   Endpoint addr;
   double lastRecv = 0.0;
   PlayerState state;
@@ -273,6 +279,8 @@ class Client {
   void Pump(double now);
 
   void SendInput(const LocalPlayer& lp, uint32_t tick);
+  // Rides along on every input packet, so the server knows not to hurt us.
+  void SetGodMode(bool on) { godMode_ = on; }
   void SendHit(uint8_t target, float damage, uint8_t weapon, bool headshot);
   // Fall damage. The server applies it to whoever sent it.
   void SendFall(float damage);
@@ -305,6 +313,7 @@ class Client {
   Endpoint server_;
   std::string name_;
   std::string error_;
+  bool godMode_ = false;
   int myId_ = -1;
   double lastJoinSend_ = 0.0;
   double lastRecv_ = 0.0;

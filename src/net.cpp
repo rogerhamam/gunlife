@@ -534,6 +534,7 @@ void Server::ApplyBlast(Vector3 pos, float radius, float damage, int owner,
   for (int i = 0; i < kMaxPlayers; ++i) {
     ServerSlot& s = slots_[i];
     if (!s.used || s.state.dead()) continue;
+    if (s.godMode) continue;               // blasts wash over god mode too
     // A bot's own explosives never hurt the rest of the squad -- now that
     // they throw grenades and carry launchers, one careless rocket would take
     // out half a wave. It still hurts the thrower, which is what stops them
@@ -853,6 +854,10 @@ void Server::UpdateBots() {
             // does not thin itself out by shooting through its own front
             // rank.
             if (slots_[j].bot) continue;
+            // A god-mode player is not a candidate at all, so the round
+            // carries on past and hits the wall behind -- you can watch them
+            // shoot at you and see where it lands.
+            if (slots_[j].godMode) continue;
             const PlayerState& ps = slots_[j].state;
             const Vector3 base = ps.pos();
             const float hgt = ps.height();
@@ -983,6 +988,9 @@ void Server::HandlePacket(const Endpoint& from, const uint8_t* data, int len,
       const float yaw = r.f32(), pitch = r.f32();
       const uint8_t weapon = r.u8();
       const uint8_t flags = r.u8();
+      // Trailing byte. Reader zero-fills past the end of a packet, so a
+      // client that never sends it simply reads as god mode off.
+      s.godMode = r.u8() != 0;
       if (!s.state.dead()) {
         s.state.x = x; s.state.y = y; s.state.z = z;
         s.state.yaw = yaw; s.state.pitch = pitch;
@@ -1015,6 +1023,7 @@ void Server::HandlePacket(const Endpoint& from, const uint8_t* data, int len,
     }
     case MSG_FALL: {
       if (slot < 0 || slots_[slot].state.dead()) return;
+      if (slots_[slot].godMode) return;
       float dmg = r.f32();
       if (!(dmg > 0.0f)) return;                 // also rejects NaN
       // Capped at twice a full health bar: enough to be fatal from any
@@ -1046,6 +1055,7 @@ void Server::HandlePacket(const Endpoint& from, const uint8_t* data, int len,
       if (target >= kMaxPlayers || !slots_[target].used) return;
       ServerSlot& v = slots_[target];
       if (v.state.dead() || target == slot) return;
+      if (v.godMode) return;               // nothing touches a god-mode slot
       // Co-op: the two of you are on the same side and cannot shoot each
       // other. Bots are exempt from this -- they are the opposition.
       if (coop_ && !v.bot && !slots_[slot].bot) return;
@@ -1310,6 +1320,7 @@ void Client::SendInput(const LocalPlayer& lp, uint32_t tick) {
   w.f32(lp.yaw); w.f32(lp.viewPitch());
   w.u8(lp.arsenal.current);
   w.u8(flags);
+  w.u8(godMode_ ? 1 : 0);
   socket_.Send(server_, w.buf, w.len);
 }
 

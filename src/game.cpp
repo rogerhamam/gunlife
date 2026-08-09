@@ -349,7 +349,9 @@ void Game::ResolveHostileFire() {
         if (drivingVehicle_ >= 0) AbsorbVehicleDamage(dmg, WEAPON_ROCKET);
         else lp_.Damage(dmg);
         damageFlash_ = fminf(1.0f, damageFlash_ + 0.5f);
-        shake_ = fmaxf(shake_, 1.2f);
+        // No shake of its own. The blast that threw this damage already
+        // shakes the camera through EV_BLAST, and stacking a second kick on
+        // top of it was what made a gunship pass unwatchable.
       }
     } else {
       // Gunship minigun: a hitscan round with a tracer, and a bite of damage
@@ -473,7 +475,8 @@ void Game::RunOverPeople() {
     SplatterBlood(Vector3Add(p, Vector3{0, kPlayerHeight * 0.45f, 0}), along,
                   9.0f);
     assets_.Play("bump", 0.9f, 0.5f, RandRange(0.9f, 1.05f));
-    shake_ = fminf(1.4f, shake_ + 0.45f);
+    // The thump and the drag on the car carry it. This runs every tick you
+    // are overlapping someone, so a shake here compounded into a seizure.
     v.speed *= 0.9f;
     hitMarker_ = 0.28f;
     hitWasHead_ = false;
@@ -836,6 +839,14 @@ void Game::GatherInput(InputCommand* cmd) {
 
 void Game::Tick() {
   showScores_ = IsKeyDown(KEY_TAB) || debugScores_;
+
+  // God mode has to be published before anything runs, because most of what
+  // can hurt you is not decided here: the server applies bot fire and blasts,
+  // and the vehicle system applies crash damage. Both are told once a tick,
+  // and every other damage path in this file checks devGodMode_ directly.
+  client_.SetGodMode(devGodMode_);
+  vehicles_.SetInvulnerable(devGodMode_ ? drivingVehicle_ : -1);
+
   if (debugHasTeleport_ && (debugPin_ || now_ < 3.0)) {
     lp_.pos = debugTeleport_;
     lp_.vy = 0.0f;
@@ -1634,8 +1645,11 @@ Vector3 Game::FindExitSpot(const Vehicle& v) const {
 // knows nothing about vehicles, so anything with a blast radius has to hurt
 // them here.
 void Game::ApplyLocalBlast(Vector3 at, float radius, float damage) {
+  int index = -1;
   for (Vehicle& v : vehicles_.list()) {
+    ++index;
     if (v.life <= 0.0f) continue;
+    if (devGodMode_ && index == drivingVehicle_) continue;
     const Vector3 c{v.pos.x, v.pos.y + VehicleInfo(v.kind).height * 0.5f,
                     v.pos.z};
     const float dist = Vector3Distance(c, at);
@@ -1661,6 +1675,7 @@ bool Game::HurtsTank(int weapon) {
 // you are behind its armour, not standing in the open.
 void Game::AbsorbVehicleDamage(float amount, int weapon) {
   if (drivingVehicle_ < 0 || amount <= 0.0f) return;
+  if (devGodMode_) return;                 // your ride is untouchable too
   Vehicle& v = vehicles_.list()[drivingVehicle_];
 
   if (v.kind == VEH_TANK && !HurtsTank(weapon)) {
@@ -1737,7 +1752,8 @@ void Game::TryFireHeli(bool pressed, bool held) {
     fx_.MuzzleFlash(hard, aim, 3.4f, 3.0f);
     fx_.MuzzleFlash(hard, Vector3Negate(aim), 2.0f, 2.2f);
     AddFlashLight(hard, Vector3{1.35f, 0.95f, 0.45f}, 300.0f, 0.08f);
-    shake_ = fminf(1.0f, shake_ + 0.18f);
+    // A rocket leaving the rail does not move the airframe. Salvo fire put
+    // eight of these in under a second and shook the cockpit apart.
     if (heliRockets_ == 0) assets_.Play("lastshot", 0.45f);
     return;
   }

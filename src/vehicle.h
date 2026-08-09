@@ -175,6 +175,13 @@ class VehicleSystem {
   // colliders have not been pushed yet this tick).
   int ColliderBrush(const World& world, int vehicle) const;
 
+  // Dev god mode: the vehicle the player is sitting in takes nothing at all,
+  // not from gunfire and not from driving it into a wall. -1 for none.
+  void SetInvulnerable(int index) { invulnerable_ = index; }
+  bool invulnerable(int index) const {
+    return index >= 0 && index == invulnerable_;
+  }
+
   // Index of the vehicle the player at `feet` looking along `yawDeg` can get
   // into, or -1. Mirrors GTJ's distance + 45 degree facing test.
   int FindEnterable(Vector3 feet, float yawDeg) const;
@@ -232,6 +239,7 @@ class VehicleSystem {
   std::vector<float> accel_, maxSpeed_;
   // Vehicle index for each collider pushed into the world, in push order.
   std::vector<int> colliderVeh_;
+  int invulnerable_ = -1;
 
   Vector3 threat_{};
   bool haveThreat_ = false;

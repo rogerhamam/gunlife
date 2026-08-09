@@ -392,7 +392,8 @@ void VehicleSystem::Tick(World& world, int driven, const DriveInput& in) {
         // Clipped something: stop dead and take the knock.
         if (fabsf(v.speed) > 4.0f) {
           v.crashImpulse = fabsf(v.speed);
-          v.life -= powf(fabsf(v.speed), 1.4f);
+          if (!invulnerable(static_cast<int>(i)))
+            v.life -= powf(fabsf(v.speed), 1.4f);
         }
         v.speed *= -0.2f;
         next.x = v.pos.x;
@@ -459,7 +460,8 @@ void VehicleSystem::Tick(World& world, int driven, const DriveInput& in) {
         // bounced back at 30% of what it was doing.
         if (fabsf(v.speed) > 6.0f && moved < fabsf(v.speed) * 0.6f) {
           v.crashImpulse = fabsf(v.speed);
-          v.life -= powf(fabsf(v.speed), 1.5f);
+          if (!invulnerable(static_cast<int>(i)))
+            v.life -= powf(fabsf(v.speed), 1.5f);
           v.speed *= -0.3f;
         } else {
           v.speed *= 0.8f;
@@ -501,7 +503,9 @@ bool VehicleSystem::DamageByBrush(const World& world, int brushIndex,
   if (vi < 0 || vi >= count()) return false;
   Vehicle& v = vehicles_[vi];
   if (v.life <= 0.0f) return false;
-  v.life -= damage;
+  // Report the hit -- the round still marks the panel and clicks -- but a
+  // god-mode ride does not lose anything for it.
+  if (!invulnerable(vi)) v.life -= damage;
   if (outVehicle) *outVehicle = vi;
   return true;
 }
