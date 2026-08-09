@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(KajsShooterGame3D CXX)
+project(Gunlife CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,7 +11,7 @@ endif()
 
 set(RAYLIB_DIR ${CMAKE_SOURCE_DIR}/vendor/raylib-6.0_win64_mingw-w64)
 
-add_executable(kaj_shooter
+add_executable(gunlife
   src/main.cpp
   src/assets.cpp
   src/world.cpp
@@ -26,12 +26,12 @@ add_executable(kaj_shooter
   src/game.cpp
 )
 
-target_include_directories(kaj_shooter PRIVATE ${RAYLIB_DIR}/include src)
-target_link_libraries(kaj_shooter PRIVATE
+target_include_directories(gunlife PRIVATE ${RAYLIB_DIR}/include src)
+target_link_libraries(gunlife PRIVATE
   ${RAYLIB_DIR}/lib/libraylib.a
   opengl32 gdi32 winmm ws2_32
 )
 
 if(MINGW)
-  target_link_options(kaj_shooter PRIVATE -static-libgcc -static-libstdc++)
+  target_link_options(gunlife PRIVATE -static-libgcc -static-libstdc++)
 endif()

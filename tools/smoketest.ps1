@@ -3,13 +3,13 @@
 # without a human at the keyboard.
 param([string]$Root = (Split-Path -Parent $PSScriptRoot))
 
-$exe = Join-Path $Root "bin\kaj_shooter.exe"
+$exe = Join-Path $Root "bin\gunlife.exe"
 $out = Join-Path $Root "testshots"
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 Set-Location $Root
 
 function Run($name, $extra) {
-  Get-Process kaj_shooter -ErrorAction SilentlyContinue | Stop-Process -Force
+  Get-Process gunlife -ErrorAction SilentlyContinue | Stop-Process -Force
   Start-Sleep -Milliseconds 500
   # raylib rejects filenames containing an apostrophe, and the project folder
   # has one -- so keep the screenshot path relative to the working directory.
@@ -69,5 +69,5 @@ Run "story_wave1"  @("--storywave", "1")
 Run "story_wave8"  @("--storywave", "8", "--autopitch", "10")
 Run "story_wave15" @("--storywave", "15", "--autopitch", "10")
 
-Get-Process kaj_shooter -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process gunlife -ErrorAction SilentlyContinue | Stop-Process -Force
 Write-Host "shots written to $out"

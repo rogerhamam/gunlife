@@ -441,7 +441,11 @@ void Sky::Update(float dt, Assets& assets, Vector3 listener) {
   }
 
   // ---- ambient beds ----------------------------------------------------
-  const float windVol = Clampf(0.05f + storm_ * 0.35f, 0.0f, 0.45f);
+  // The weather bed -- wind and rain -- at two thirds of what it was. At full
+  // volume a storm sat on top of the gunfire instead of behind it.
+  constexpr float kWeatherVolume = 0.67f;
+  const float windVol =
+      Clampf(0.05f + storm_ * 0.35f, 0.0f, 0.45f) * kWeatherVolume;
   assets.PlayLoop("wind", windVol);
   assets.SetLoopVolume("wind", windVol);
   (void)listener;

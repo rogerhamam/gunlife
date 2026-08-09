@@ -60,7 +60,7 @@ def complex_at(ox, name):
 
 
 w("# ============================================================================")
-w("#  Kaj's Shooter Game 3D  --  \"Urban Complex\"")
+w("#  Gunlife  --  \"Urban Complex\"")
 w("#")
 w("#  Two city complexes at either end, joined by a highway about 180 m long")
 w("#  (2000 world units at GTJ3D's 11 units per metre) with traffic running")

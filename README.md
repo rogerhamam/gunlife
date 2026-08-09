@@ -1,4 +1,4 @@
-# Kaj's Shooter Game 3D
+# Gunlife
 
 A CS:GO-style first-person shooter in C++17 on raylib, set in an urban complex,
 playable single player against bots or over the network.
@@ -11,9 +11,9 @@ layered on top of GTJ3D's without replacing any of it.
     play.bat           run          -> main menu
     play.bat --sp      straight into single player
     play.bat --story   straight into the wave campaign
-    build.bat          compile      -> bin\kaj_shooter.exe
+    build.bat          compile      -> bin\gunlife.exe
 
-**A clone is playable as it stands.** `bin\kaj_shooter.exe` is committed, and
+**A clone is playable as it stands.** `bin\gunlife.exe` is committed, and
 every texture, sound, model, map and music track it loads is in `assets/`.
 Nothing the game opens at runtime lives outside this folder. raylib is in
 `vendor/`, so `build.bat` works from a clean checkout too — you need CMake,
@@ -48,6 +48,21 @@ staged. See *Assets*.
 
 In a car the same keys drive it. The gunship rebinds them — see *Flying the
 gunship*.
+
+**`C` swings the camera out behind whatever you are in** — GTJ3D's
+`control.view_mode`, which put the camera 128 units back along the view
+direction and up at `height * 2.7`. Same idea, but the offsets come from the
+vehicle, so a tank sits further out than a saloon, and it rides higher and
+looks down, which is what makes it useful for placing a wheel or judging a
+gap. Only the camera moves: you are still in the seat, so every weapon fires
+from the vehicle and not from a point sixty units behind it. On foot `C` is
+still crouch.
+
+Only *level geometry* pulls that camera in when something is in the way.
+Vehicles push their bounding boxes into the world too, and they sit in a run
+at the end of the brush list, so without excluding them the ray stops on the
+bodywork of the very car it is trying to look at and the camera ends up
+inside the rear window.
 
 ### Story mode
 
@@ -138,6 +153,10 @@ behaves identically online.
     play.bat --host --bots 4
     play.bat --connect 192.168.1.20
     play.bat --sp --weather storm
+
+Or pick **JOIN BY IP** in the menu and simply start typing — selecting that row
+gives the address field focus, arrow keys still move off it, and Enter
+connects. `E` toggles the field by hand from anywhere.
 
 Flags: `--sp`, `--story`, `--storywave <n>`, `--host`, `--connect <ip>`,
 `--port <n>`, `--name <n>`, `--bots <n>`,
@@ -492,14 +511,15 @@ run bob is a smoothed two-beat footfall curve — the earlier version shook hard
 enough to be distracting.
 
 **Fall damage.** GTJ3D had none — you could step off the civic tower and walk
-away, which made every rooftop a free ride down. The safe limit is set from
-the jump itself: 2.6 up against 0.15 of gravity tops out about 22 units and
-comes back down at 2.6 a tick, so anything at or under 3.0 has to cost
-nothing or your own jump would hurt you. Past that the damage goes with the
-square of the impact speed — which is proportional to the height fallen — and
-by about 8 a tick, a little over 200 units or five storeys, it is fatal.
-Nothing plays on a landing that did no damage: a thump on every touchdown
-lands a beat after `snd_jump` and reads as the jump sound firing twice.
+away, which made every rooftop a free ride down. Impact speed relates to
+height as `h = v² / 2g`, so with gravity at 0.15 the two thresholds work out
+at about **59 units free** (a good five metres — a kerb, a crate stack, one
+storey, anything you would drop off deliberately) and **400 units fatal**
+(ten storeys). Between them the damage goes with the square of the impact
+speed, so the tariff stays light through the middle of the range and only
+bites near the bottom of a long drop. Nothing plays on a landing that did no
+damage: a thump on every touchdown lands a beat after `snd_jump` and reads as
+the jump sound firing twice.
 
 It travels as its own message (`MSG_FALL`) rather than as a hit on yourself,
 because `MSG_HIT` rejects `target == slot` outright and caps damage at what

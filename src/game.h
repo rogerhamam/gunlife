@@ -214,6 +214,10 @@ class Game {
   int enterTimer_ = 0;        // GTJ's entering_car_timer: 60 ticks of door+start
   int nearVehicle_ = -1;      // what the "press E" prompt is pointing at
   int driveTurning_ = 0;      // GTJ's `turning`: 0 straight, 1 left, 2 right
+  // GTJ3D's `control.view_mode`: 0 is from the seat, 1 is the chase camera
+  // it swung out behind the car. `C` toggles it, and only while you are in
+  // something -- on foot that key is crouch.
+  bool chaseCam_ = false;
   bool engineAudio_ = false;
   // A hostile gunship's rotor, heard from the ground. Separate from
   // engineAudio_, which is the machine you are sitting in.

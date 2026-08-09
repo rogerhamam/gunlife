@@ -1,8 +1,8 @@
-// Kaj's Shooter Game 3D
+// Gunlife
 //
-//   kaj_shooter.exe                        -> main menu
-//   kaj_shooter.exe --host --bots 4        -> start hosting immediately
-//   kaj_shooter.exe --connect 192.168.1.20 -> join a friend
+//   gunlife.exe                        -> main menu
+//   gunlife.exe --host --bots 4        -> start hosting immediately
+//   gunlife.exe --connect 192.168.1.20 -> join a friend
 //
 // Assets, sounds and weapon feel are lifted from Grand Theft Jack 3D.
 #include <cstdio>
@@ -97,7 +97,7 @@ int main(int argc, char** argv) {
     }
     else if (a == "--help" || a == "-h") {
       printf(
-          "Kaj's Shooter Game 3D\n"
+          "Gunlife\n"
           "  --sp                single player: local match vs bots, dev tools\n"
           "  --story             story mode: escalating waves, armour and air\n"
           "  --host              host a match and play in it\n"
@@ -120,7 +120,7 @@ int main(int argc, char** argv) {
   unsigned flags = FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE;
   if (autoshotAfter <= 0.0) flags |= FLAG_VSYNC_HINT;
   SetConfigFlags(flags);
-  InitWindow(width, height, "Kaj's Shooter Game 3D");
+  InitWindow(width, height, "Gunlife");
   if (fullscreen) ToggleFullscreen();
   SetExitKey(KEY_NULL);          // Escape is the in-game menu, not quit
   const double tWindow = GetTime();

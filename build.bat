@@ -1,5 +1,5 @@
 @echo off
-REM Configure + build Kaj's Shooter Game 3D. Output: bin\kaj_shooter.exe
+REM Configure + build Gunlife. Output: bin\gunlife.exe
 setlocal
 cd /d "%~dp0"
 
@@ -9,7 +9,7 @@ if not exist build (
 cmake --build build || goto :fail
 
 echo.
-echo Built bin\kaj_shooter.exe
+echo Built bin\gunlife.exe
 goto :eof
 
 :fail

@@ -1,4 +1,4 @@
-// UDP client/server for Kaj's Shooter Game 3D.
+// UDP client/server for Gunlife.
 //
 // Model: movement is client-authoritative (each client reports where it is),
 // hit registration is shooter-authoritative with server-side sanity checks, and

@@ -1,4 +1,4 @@
-# Intermediate build output. bin/kaj_shooter.exe is tracked on purpose -- see
+# Intermediate build output. bin/gunlife.exe is tracked on purpose -- see
 # below -- so this only drops the object files and the CMake cache.
 #
 # Note the compiler-object rules are scoped to /build/. A bare `*.obj` also

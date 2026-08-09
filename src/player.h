@@ -57,6 +57,10 @@ struct InputCommand {
   float moveStrafe = 0;    // -1..1
   bool jump = false;
   bool crouch = false;
+  // Ctrl alone, without the `C` alias crouch also answers to. The gunship's
+  // collective is on this: `C` toggles the chase camera while you are in a
+  // vehicle, so it cannot also be the thing that makes you descend.
+  bool descend = false;
   bool sneak = false;
   bool fire = false;
   bool firePressed = false;

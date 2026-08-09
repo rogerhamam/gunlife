@@ -2,7 +2,7 @@
 """Copy the GTJ3D assets the game actually uses into assets/.
 
 Run after tools/gmk_extract.py. Keeps the raw extraction untouched so the
-mapping from GTJ3D name -> Kaj's Shooter name lives in exactly one place.
+mapping from GTJ3D name -> Gunlife name lives in exactly one place.
 
 DELETIONS ARE PERMANENT. Every staged file is recorded in assets/.staged.json.
 On a later run, anything that was staged before but is now missing from

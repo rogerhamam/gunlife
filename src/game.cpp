@@ -723,6 +723,7 @@ void Game::GatherInput(InputCommand* cmd) {
   if (IsKeyDown(KEY_A)) cmd->moveStrafe -= 1.0f;
   cmd->jump = IsKeyDown(KEY_SPACE);
   cmd->crouch = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_C);
+  cmd->descend = IsKeyDown(KEY_LEFT_CONTROL);
   cmd->sneak = IsKeyDown(KEY_LEFT_SHIFT);
   cmd->fire = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
   cmd->firePressed = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
@@ -1389,6 +1390,10 @@ void Game::TickVehicles(const InputCommand& in) {
     di.right = in.moveStrafe > 0.5f;
     // GTJ's `turning`, which is what picks the steering wheel sprite frame.
     driveTurning_ = di.left ? 1 : (di.right ? 2 : 0);
+    // C swings the camera out behind, GTJ3D's view_mode. Only in a vehicle:
+    // on foot that key is crouch, and the crouch is read from the same
+    // command, so this cannot steal it.
+    if (IsKeyPressed(KEY_C)) chaseCam_ = !chaseCam_;
     // The gunship is flown with the mouse: the nose follows where you look,
     // and how far you are looking down is how far it tips forward.
     if (vehicles_.list()[drivingVehicle_].kind == VEH_HELI) {
@@ -1400,7 +1405,7 @@ void Game::TickVehicles(const InputCommand& in) {
       // from how far down you were looking -- which left W and S doing
       // nothing but up and down.
       di.climb = in.jump;
-      di.sink = in.crouch;
+      di.sink = in.descend;
     }
   } else {
     driveTurning_ = 0;
@@ -2237,13 +2242,64 @@ void Game::DebugReport() const {
 Camera3D Game::BuildCamera() const {
   Camera3D cam{};
   Vector3 eye = lp_.eyePos();
+  Vector3 look = Vector3Add(eye, lp_.aimDir());
+
+  // --- chase camera --------------------------------------------------------
+  // GTJ3D's view_mode 1: it swung the camera 128 units back along the view
+  // direction and up to height * 2.7. Same idea, but the offsets are taken
+  // from the vehicle rather than fixed, so a tank sits further out than a
+  // saloon, and it rides higher and looks down -- which is what makes it
+  // useful for placing a wheel or judging a gap.
+  //
+  // Deliberately only the *camera* moves. lp_.pos stays in the seat, so every
+  // weapon still fires from the vehicle and not from a point sixty units
+  // behind it.
+  if (chaseCam_ && drivingVehicle_ >= 0 &&
+      drivingVehicle_ < vehicles_.count() && !lp_.dead) {
+    const Vehicle& v = vehicles_.list()[drivingVehicle_];
+    const VehicleDef& d = VehicleInfo(v.kind);
+    const Vector3 pivot{v.pos.x, v.pos.y + d.height * 0.55f, v.pos.z};
+    const Vector3 flat = FlatForward(lp_.yaw);
+    const float back = fmaxf(128.0f, (d.length + d.frontLength) * 1.9f);
+    const float up = 52.0f + d.height * 1.35f;
+    // Looking down at it pulls the camera further back the more you pitch
+    // up, so the vehicle stays in frame instead of sliding off the bottom.
+    const float rise = up - lp_.viewPitch() * 1.1f;
+
+    Vector3 want = Vector3Add(pivot, Vector3{-flat.x * back, rise,
+                                             -flat.z * back});
+    // Do not put the camera inside a wall. Pull it in along the line from the
+    // vehicle to wherever it wanted to be, stopping short of whatever it hit.
+    Vector3 ray = Vector3Subtract(want, pivot);
+    const float len = Vector3Length(ray);
+    if (len > 1.0f) {
+      ray = Vector3Scale(ray, 1.0f / len);
+      const RayHit h = world_.Raycast(pivot, ray, len);
+      // Only *level geometry* pulls the camera in. Vehicles push their
+      // bounding boxes into the world too, and they live in a run at the end
+      // of the brush list -- so without this test the ray stops on the
+      // bodywork of the very car it is trying to look at, or on one parked
+      // alongside, and the camera ends up inside the rear window.
+      if (h.hit && h.brushIndex < world_.staticBrushCount()) {
+        // Never closer than the vehicle is long, or it clips into its own
+        // bodywork on the way in.
+        const float minOut = (d.length + d.frontLength) * 0.75f;
+        want = Vector3Add(pivot, Vector3Scale(ray, fmaxf(minOut, h.dist - 10.0f)));
+      }
+    }
+    eye = want;
+    // Aim past the vehicle rather than at it, so the crosshair still tracks
+    // roughly where the guns are pointed.
+    look = Vector3Add(pivot, Vector3Scale(lp_.aimDir(), 220.0f));
+  }
+
   if (shake_ > 0.0f) {
     eye.x += RandRange(-shake_, shake_);
     eye.y += RandRange(-shake_, shake_);
     eye.z += RandRange(-shake_, shake_);
   }
   cam.position = eye;
-  cam.target = Vector3Add(eye, lp_.aimDir());
+  cam.target = look;
   cam.up = Vector3{0.0f, 1.0f, 0.0f};
   const WeaponDef& d = Weapon(lp_.arsenal.current);
   cam.fovy = kFovY + (d.zoomFov - kFovY) * (d.canZoom ? lp_.zoomT : 0.0f);
@@ -2287,7 +2343,7 @@ void Game::DrawGame() {
   // the car on that frame too. Waiting out the door-and-start second left you
   // sitting in the seat looking at the *outside* of the bodywork for a full
   // second before it swapped.
-  const bool inCar = drivingVehicle_ >= 0 && !lp_.dead &&
+  const bool inCar = drivingVehicle_ >= 0 && !lp_.dead && !chaseCam_ &&
                      VehicleSystem::HasGtjShell(
                          vehicles_.list()[drivingVehicle_].kind) &&
                      assets_.haveCarSkins();
@@ -2339,10 +2395,11 @@ void Game::DrawGame() {
   }
   // In a car you are holding a steering wheel, not a weapon -- GTJ3D swapped
   // the same way, drawing spr_steering_wheel in front of the driver.
-  if (drivingVehicle_ >= 0 && !lp_.dead) {
+  if (drivingVehicle_ >= 0 && !lp_.dead && !chaseCam_) {
     const Vehicle& v = vehicles_.list()[drivingVehicle_];
-    // Sitting at the window line means looking through glass. A very light
-    // cool wash sells that without dimming what you are trying to shoot at.
+    // All of this is what you see *from the seat* -- canopy frame, glazing,
+    // steering wheel. From the chase camera you are outside the vehicle
+    // looking at it, so none of it belongs on screen.
     if (v.kind == VEH_HELI) {
       // Artificial cockpit. The fuselage is one shell with no interior, so
       // rather than sit inside untextured geometry the canopy is drawn as a
@@ -2384,7 +2441,10 @@ void Game::DrawGame() {
       renderer_.DrawSteeringWheel(assets_, driveTurning_, v.wheelAngle, bump,
                                   hud);
     }
-  } else {
+  } else if (drivingVehicle_ < 0) {
+    // Only on foot. Driving from the chase camera falls through to here, and
+    // it must not put a rifle in the middle of the screen while you are
+    // watching your own car from behind.
     renderer_.DrawViewmodel(assets_, lp_.arsenal.current, vmFrame_,
                             lp_.bobPhase, lp_.bobAmount, lp_.zoomT, lp_.dead,
                             reloadT, vmRecoilT_, hud);
@@ -2569,7 +2629,7 @@ void Game::DrawMenu() {
   ClearBackground(Color{14, 16, 22, 255});
   const int W = GetScreenWidth(), H = GetScreenHeight();
 
-  const char* title = "KAJ'S SHOOTER GAME 3D";
+  const char* title = "GUNLIFE";
   DrawText(title, W / 2 - MeasureText(title, 46) / 2, (int)(H * 0.10f), 46,
            Color{240, 205, 90, 255});
   const char* sub = "built on the bones of Grand Theft Jack 3D";
@@ -2610,10 +2670,19 @@ void Game::DrawMenu() {
                           "host a match and play in it",
                           "connect to a friend's server", mapBlurb, ""};
   const int n = 6;
-  if (!editingIp_) {
-    if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) menuIndex_ = (menuIndex_ + 1) % n;
-    if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W)) menuIndex_ = (menuIndex_ + n - 1) % n;
-  }
+  const int kJoinRow = 3;
+  // Arrow keys always navigate, even while the address field has focus --
+  // otherwise landing on JOIN BY IP trapped you in a text box with no
+  // obvious way out. W/S only navigate when the field does *not* have focus,
+  // because they are letters and you may be typing a hostname.
+  const bool navDown = IsKeyPressed(KEY_DOWN) || (!editingIp_ && IsKeyPressed(KEY_S));
+  const bool navUp = IsKeyPressed(KEY_UP) || (!editingIp_ && IsKeyPressed(KEY_W));
+  if (navDown) menuIndex_ = (menuIndex_ + 1) % n;
+  if (navUp) menuIndex_ = (menuIndex_ + n - 1) % n;
+  // Selecting the row gives the field focus, so you can simply start typing
+  // the address. Moving off it takes focus away again. `E` still toggles it
+  // by hand from anywhere, which is how it used to be reached.
+  if (navDown || navUp) editingIp_ = (menuIndex_ == kJoinRow);
 
   const int baseY = (int)(H * 0.34f);
   for (int i = 0; i < n; ++i) {
@@ -2634,7 +2703,8 @@ void Game::DrawMenu() {
 
   const int ipY = baseY + n * 44 + 24;
   char ipLine[128];
-  snprintf(ipLine, sizeof(ipLine), "server: %s:%u%s", ipBuffer_.c_str(),
+  snprintf(ipLine, sizeof(ipLine), "%s %s:%u%s",
+           editingIp_ ? "type the address:" : "server:", ipBuffer_.c_str(),
            (unsigned)opts_.port, editingIp_ ? "_" : "");
   DrawText(ipLine, W / 2 - MeasureText(ipLine, 20) / 2, ipY, 20,
            editingIp_ ? Color{255, 235, 150, 255} : Color{150, 158, 170, 255});
@@ -2651,8 +2721,8 @@ void Game::DrawMenu() {
   DrawText(help, W / 2 - MeasureText(help, 15) / 2, H - 46, 15,
            Color{110, 118, 130, 255});
   const char* help2 =
-      "E edit server address   +/- bots   Left/Right map   Enter select   "
-      "F1 dev keys";
+      "JOIN BY IP: just type the address   +/- bots   Left/Right map   "
+      "Enter select   F1 dev keys";
   DrawText(help2, W / 2 - MeasureText(help2, 15) / 2, H - 26, 15,
            Color{110, 118, 130, 255});
 
@@ -2661,15 +2731,22 @@ void Game::DrawMenu() {
     while ((ch = GetCharPressed()) > 0) {
       if (ipBuffer_.size() < 40 &&
           ((ch >= '0' && ch <= '9') || ch == '.' || (ch >= 'a' && ch <= 'z') ||
-           (ch >= 'A' && ch <= 'Z') || ch == '-'))
+           (ch >= 'A' && ch <= 'Z') || ch == '-' || ch == ':'))
         ipBuffer_.push_back((char)ch);
     }
     if (IsKeyPressed(KEY_BACKSPACE) && !ipBuffer_.empty()) ipBuffer_.pop_back();
-    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_ESCAPE)) editingIp_ = false;
+    if (IsKeyPressed(KEY_ESCAPE)) { editingIp_ = false; return; }
+    // Enter on the join row connects rather than merely dismissing the
+    // field: having typed an address, that is plainly what you meant.
+    if (IsKeyPressed(KEY_ENTER)) {
+      editingIp_ = false;
+      if (menuIndex_ == kJoinRow) { opts_.host = false; StartJoin(); }
+      return;
+    }
     return;
   }
 
-  if (IsKeyPressed(KEY_E)) { editingIp_ = true; return; }
+  if (IsKeyPressed(KEY_E)) { editingIp_ = true; menuIndex_ = kJoinRow; return; }
   if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD))
     opts_.bots = std::min(opts_.bots + 1, kMaxPlayers - 2);
   if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT))

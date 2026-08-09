@@ -27,11 +27,22 @@ void LocalPlayer::Reset(Vector3 spawnPos, float spawnYaw) {
 // height fallen. kJumpSpeed is 2.6, so the safe limit is a shade above it to
 // allow for a jump off a kerb on the way down.
 float LocalPlayer::FallDamage(float impact) {
-  constexpr float kSafe = 3.0f;      // units per tick; your own jump lands at 2.6
-  constexpr float kFatal = 8.0f;     // ~215 units up, five storeys
+  // Impact speed relates to height as h = v^2 / (2 * kGravity), so with
+  // kGravity 0.15 these work out at:
+  //   kSafe  4.2  ->  ~59 units, a good five metres. Anything you would drop
+  //                   off deliberately -- a kerb, a crate stack, one storey
+  //                   -- costs nothing.
+  //   kFatal 11.0 ->  ~400 units, ten storeys. Below that it hurts but you
+  //                   walk away; the old 8.0 made a five-storey drop lethal
+  //                   and a two-storey one expensive.
+  constexpr float kSafe = 4.2f;
+  constexpr float kFatal = 11.0f;
   if (impact <= kSafe) return 0.0f;
   const float t = (impact - kSafe) / (kFatal - kSafe);
-  return Clampf(t * t, 0.0f, 1.6f) * kMaxHealth;
+  // Squared, so the tariff stays light through the middle of the range and
+  // only bites near the bottom of a long drop. Capped a shade over a full
+  // health bar rather than at 1.6 of one.
+  return Clampf(t * t, 0.0f, 1.1f) * kMaxHealth;
 }
 
 float LocalPlayer::CurrentSpread() const {

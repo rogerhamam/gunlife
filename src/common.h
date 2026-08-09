@@ -1,4 +1,4 @@
-﻿// Kaj's Shooter Game 3D -- shared types and tuning constants.
+﻿// Gunlife -- shared types and tuning constants.
 //
 // Units, speeds and physics constants are inherited from Grand Theft Jack 3D
 // (GTJ3D.gmk) so the game moves and shoots the same way. GTJ ran a fixed 60

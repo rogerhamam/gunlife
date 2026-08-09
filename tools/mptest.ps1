@@ -3,11 +3,11 @@
 # the other player's body, name tag and health bar replicated over UDP.
 param([string]$Root = (Split-Path -Parent $PSScriptRoot))
 
-$exe = Join-Path $Root "bin\kaj_shooter.exe"
+$exe = Join-Path $Root "bin\gunlife.exe"
 New-Item -ItemType Directory -Force -Path (Join-Path $Root "testshots") | Out-Null
 Set-Location $Root
 
-Get-Process kaj_shooter -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process gunlife -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 400
 
 $hostArgs = @("--host", "--bots", "0", "--name", "HostKaj", "--width", "1024",
@@ -30,7 +30,7 @@ $cliProc = Start-Process -FilePath $exe -ArgumentList $cliArgs -PassThru `
 
 $cliProc.WaitForExit(60000) | Out-Null
 $hostProc.WaitForExit(60000) | Out-Null
-Get-Process kaj_shooter -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process gunlife -ErrorAction SilentlyContinue | Stop-Process -Force
 
 Write-Host "--- host log ---"
 Get-Content (Join-Path $Root "testshots\mp_host.log") -ErrorAction SilentlyContinue |
