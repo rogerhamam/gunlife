@@ -700,6 +700,33 @@ void Renderer::DrawHud(const Assets& assets, const HudInfo& info,
                    Color{70, 150, 235, 235});
   }
 
+  // ---- the hull you are behind ------------------------------------------
+  // Its own bar, above your own, in blue. Damage taken in a vehicle is
+  // absorbed by the vehicle, so this is the number that says how long you
+  // have before you are on foot again -- and your red bar sitting at 100 the
+  // whole time says nothing about it.
+  if (info.inVehicle) {
+    const float vh = Clampf(info.vehicleHealth, 0.0f, 1.0f);
+    const Vector2 vb = hud.P(32, kHudH - (info.armor > 0.0f ? 66 : 46));
+    const float vbh = hud.S(15);
+    DrawRectangleV(vb, {bw, vbh}, Color{0, 0, 0, 190});
+    // Cools from a healthy blue toward white-hot as the hull gives out, so a
+    // wreck about to go up is obvious without reading the number.
+    const Color full{70, 150, 235, 235};
+    const Color gone{235, 120, 90, 235};
+    const Color fill{
+        static_cast<unsigned char>(gone.r + (full.r - gone.r) * vh),
+        static_cast<unsigned char>(gone.g + (full.g - gone.g) * vh),
+        static_cast<unsigned char>(gone.b + (full.b - gone.b) * vh), 235};
+    DrawRectangleV({vb.x + 2, vb.y + 2}, {(bw - 4) * vh, vbh - 4}, fill);
+    char vbuf[64];
+    snprintf(vbuf, sizeof(vbuf), "%s %d%%",
+             info.vehicleName ? info.vehicleName : "HULL",
+             (int)(vh * 100.0f + 0.5f));
+    DrawText(vbuf, (int)(vb.x + bw + hud.S(6)), (int)(vb.y + 1),
+             (int)hud.S(11), Color{150, 190, 235, 225});
+  }
+
   // ---- weapon / ammo ---------------------------------------------------
   // Stowed while you are driving: the vehicle flies its own readout instead.
   if (info.inVehicle) return;

@@ -529,7 +529,7 @@ void FxSystem::SpawnExplosion(Vector3 pos, float radius, bool nearGround) {
 }
 
 void FxSystem::MuzzleFlash(Vector3 pos, Vector3 dir, float scale,
-                           float smokeMul) {
+                           float smokeMul, float smokeLife) {
   // The painted flame is stripped out of the sprite sheets, so this is the
   // whole muzzle flash. The muzzle sits ~16 units from the eye, so a particle
   // here covers far more screen than the same particle out in the world --
@@ -589,7 +589,7 @@ void FxSystem::MuzzleFlash(Vector3 pos, Vector3 dir, float scale,
     p.vel = Vector3Add(Vector3Scale(dir, scale * (2.0f + Fr01() * 3.0f) * smokeMul),
                        Vector3{RandRange(-1.5f, 1.5f), 2.0f + Fr01() * 2.5f,
                                RandRange(-1.5f, 1.5f)});
-    p.life = (0.5f + Fr01() * 0.7f) * (0.7f + smokeMul * 0.45f);
+    p.life = (0.5f + Fr01() * 0.7f) * (0.7f + smokeMul * 0.45f) * smokeLife;
     p.seed = Fr01();
     p.startSize = scale * (0.28f + Fr01() * 0.22f) * smokeMul;
     p.endSize = scale * (1.4f + Fr01() * 1.1f) * smokeMul;

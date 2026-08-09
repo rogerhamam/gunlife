@@ -47,7 +47,18 @@ staged. See *Assets*.
 | `F11` | fullscreen |
 
 In a car the same keys drive it. The gunship rebinds them — see *Flying the
-gunship*.
+gunship*. **Driving over somebody kills them** — `obj_player`'s entity block,
+same three conditions it used: within the vehicle's own `size` radius, inside
+20 units vertically, and doing more than 4 units a tick. Same three
+consequences too: they die, the screen shakes and the car sheds a tenth of its
+speed, over `snd_bump`.
+
+Running *along* a wall costs you nothing. `SlideMove` reports a block when
+either axis is stopped, and the old code halved your speed on that alone — so
+one axis blocked and the other free, which is exactly what sliding down a
+corridor is, had you crawling the whole length of it. What is compared now is
+how far you actually moved against how far you asked for: a slide keeps its
+speed and only a head-on stop loses it.
 
 **`C` swings the camera out behind whatever you are in** — GTJ3D's
 `control.view_mode`, which put the camera 128 units back along the view
@@ -185,7 +196,7 @@ twenty numbers, so the table below still reads as the cone each weapon was
 | 2 | Pistol | semi | 26 | 20t | 12 | GTJ's handgun cadence |
 | 3 | SMG | auto | 17 | 4t | 30 | GTJ's 900 RPM assault rifle rate |
 | 4 | Rifle | auto | 24 | 6t | 30 | 600 RPM |
-| 5 | Shotgun | semi | 8 × 13 | 50t | 8 | shell-by-shell reload |
+| 5 | Shotgun | semi | 8 × 19.5 | 50t | 8 | shell-by-shell reload |
 | 6 | Sniper | semi | 115 | 90t | 5 | rifle report pitched to 0.55 and played loud, 300t reload, 18° scope |
 | 7 | Rocket Launcher | projectile | 120 blast | 120t | 1 | speed 8/tick, radius 110 |
 | 8 | Grenade | projectile | 100 blast | 80t | ×4 | speed 6 +2.5 lift, gravity 0.2 |
@@ -510,6 +521,12 @@ Crouch interpolates over ~0.2 s in each direction instead of snapping, and the
 run bob is a smoothed two-beat footfall curve — the earlier version shook hard
 enough to be distracting.
 
+**A blue bar for the hull you are behind**, above your own health. Damage
+taken in a vehicle is absorbed by the vehicle, so that is the number deciding
+how long you have before you are on foot again — and your red bar sitting at
+100 the whole time says nothing about it. It cools from blue toward a hot
+orange as the hull gives out.
+
 **Fall damage.** GTJ3D had none — you could step off the civic tower and walk
 away, which made every rooftop a free ride down. Impact speed relates to
 height as `h = v² / 2g`, so with gravity at 0.15 the two thresholds work out
@@ -578,6 +595,39 @@ look at.
 The same shell, with `box_height` back at 6 and frame 0 of the skin, is the
 stand-in when a vehicle's `.glb` is missing — which beats the hand-stacked
 boxes that used to fill in.
+
+### Vehicle gunnery
+
+Both of the tank's weapons were completely broken, for two unrelated reasons,
+and the fixes are worth writing down because either one alone still leaves it
+useless.
+
+**The server threw the main gun's damage away.** `MSG_HIT` sanity-checks a
+claim against the weapon it names: no more than `damage x headshot x pellets`,
+and no further than `range + 120`. A blast weapon carries its damage in
+`blastDamage` and leaves `damage` at zero, and it has no hitscan `range`
+either — both fields are meaningless for something that flies. The cannon was
+the one weapon firing a *rocket-classed* round down a two-thousand-unit sight
+line, so its cap came out at 1.0 and its reach at 120 units, and every direct
+hit was silently rejected. The cap is `max(hitscan, blast)` now and the reach
+is 4000 for anything with no hitscan range.
+
+**Both guns were shooting the tank they were mounted on.** A vehicle pushes
+its bounding box into the world so collision and raycasts treat it as solid.
+The commander's eye sits three units above the top of that box, so aiming down
+even slightly put the round straight into his own roof, a few units out — the
+tracer left the barrel and went nowhere. `World::Raycast` takes an
+`ignoreBrush` now and the vehicle's own collider is passed to it.
+
+The main gun is also traced from the eye down the crosshair rather than from
+the muzzle. Firing it from the barrel sent the shell along a line *parallel*
+to the sight but a hundred units off it, so it never landed on what the sight
+was on. The muzzle is only where the flash, the smoke and the tracer come
+from; they converge on the point the sight picked.
+
+The sniper's and both tank guns' barrel smoke now clears in half the time.
+All three put out a lot of it deliberately and it was still sitting in front
+of the sight when the next round went out.
 
 ### Flying the gunship
 

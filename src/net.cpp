@@ -1008,10 +1008,21 @@ void Server::HandlePacket(const Endpoint& from, const uint8_t* data, int len,
       if (v.state.dead() || target == slot) return;
 
       // Sanity: never accept more than the weapon could plausibly do.
+      //
+      // A blast weapon carries its damage in `blastDamage` and leaves
+      // `damage` at zero, and it has no hitscan `range` either -- both are
+      // meaningless for something that flies. Reading only the hitscan fields
+      // gave the rocket a cap of 1.0 and a reach of 120 units, which silently
+      // threw away every direct hit from the tank's main gun: it was the one
+      // weapon firing a rocket-classed round down a two-thousand-unit sight
+      // line, so both tests rejected it and the cannon did nothing at all.
       const WeaponDef& d = Weapon(weapon);
-      const float cap = d.damage * kHeadMult * (d.pellets > 1 ? d.pellets : 1) + 1.0f;
+      const float hitscanCap =
+          d.damage * kHeadMult * (d.pellets > 1 ? d.pellets : 1);
+      const float cap = fmaxf(hitscanCap, d.blastDamage) + 1.0f;
       if (dmg <= 0.0f || dmg > cap) return;
-      if (Vector3Distance(slots_[slot].state.pos(), v.state.pos()) > d.range + 120.0f)
+      const float reach = d.range > 0.0f ? d.range + 120.0f : 4000.0f;
+      if (Vector3Distance(slots_[slot].state.pos(), v.state.pos()) > reach)
         return;
 
       if (v.state.armor > 0.0f) {

@@ -49,6 +49,11 @@ enum MsgType : uint8_t {
 // Stand-in weapon id on a death event, so the kill feed can tell a fall from
 // a grenade you dropped at your own feet. Deliberately above WEAPON_COUNT.
 constexpr uint8_t kDeathByFalling = 0xFE;
+// ...and run over by a vehicle. Weapon() clamps both back to the fists, which
+// is what sets the damage cap and the reach the server checks them against --
+// a roadkill happens at arm's length and for less than a fists headshot, so
+// they fit under it comfortably.
+constexpr uint8_t kDeathByRoadkill = 0xFD;
 
 enum EventType : uint8_t {
   EV_FIRE = 1,   // someone pulled a trigger (tracer + sound)

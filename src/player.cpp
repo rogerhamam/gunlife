@@ -142,8 +142,19 @@ void LocalPlayer::Tick(const InputCommand& in, const World& world) {
   // ---------------------------------------------------------------- horizontal
   bool hitWall = false;
   const float h = height();
+  const Vector3 before = pos;
   pos = world.SlideMove(pos, delta, kPlayerRadius, h, &hitWall);
-  if (hitWall) speed *= 0.5f;
+  // Only a genuine stop costs you speed. SlideMove reports `hitWall` when
+  // *either* axis was blocked, so running along a wall -- one axis blocked,
+  // the other free -- was halving your speed for the whole length of it, and
+  // you crawled down every corridor. Compare what was actually covered
+  // against what was asked for instead: a slide keeps most of it and only a
+  // head-on stop loses it.
+  if (hitWall) {
+    const float wanted = sqrtf(delta.x * delta.x + delta.z * delta.z);
+    const float moved = Vector3Distance(before, pos);
+    if (wanted > 0.01f && moved < wanted * 0.35f) speed *= 0.5f;
+  }
 
   // GameMaker friction, applied after the move like GM's own step order.
   if (speed > 0.0f) speed = fmaxf(0.0f, speed - kFriction);

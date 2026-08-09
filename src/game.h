@@ -123,6 +123,10 @@ class Game {
   void ResolveHostileFire();
   // A stopped SWAT van empties its squad into the street.
   void DeploySwatSquads();
+  // Anyone the vehicle you are driving goes through. obj_player's entity
+  // block: past `size` units and `speed > 4`, they die, the screen shakes and
+  // the car sheds a tenth of its speed.
+  void RunOverPeople();
   // Hostiles still standing: bots plus armour. What decides a wave is over.
   int EnemiesAlive() const;
 

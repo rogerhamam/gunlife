@@ -166,7 +166,12 @@ class FxSystem {
   // The full composite. `radius` is the blast radius in world units.
   void SpawnExplosion(Vector3 pos, float radius, bool nearGround);
   // Small stuff.
-  void MuzzleFlash(Vector3 pos, Vector3 dir, float scale, float smokeMul = 1.0f);
+  // `smokeLife` scales how long the barrel smoke hangs about, without
+  // changing how much of it there is. The sniper and the tank's two guns put
+  // out a lot of it deliberately, and it was still sitting in front of the
+  // sight when the next round went out.
+  void MuzzleFlash(Vector3 pos, Vector3 dir, float scale, float smokeMul = 1.0f,
+                   float smokeLife = 1.0f);
   void ImpactPuff(Vector3 pos, Vector3 normal, float scale, Color dust);
   void BloodPuff(Vector3 pos, Vector3 dir, float scale);
   // Spray out the far side of a hit, plus a mist at the entry.

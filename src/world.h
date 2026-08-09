@@ -69,7 +69,13 @@ class World {
   // Lowest ceiling at or above `minY`.
   float CeilingHeight(float x, float z, float radius, float minY) const;
 
-  RayHit Raycast(Vector3 origin, Vector3 dir, float maxDist) const;
+  // `ignoreBrush` skips one brush entirely -- used to let a vehicle's own
+  // gun shoot past its own collider. A vehicle pushes its bounding box into
+  // the world so collision treats it as solid, and the tank's roof gun fires
+  // from an eye three units above the top of that box: aim down even slightly
+  // and the first thing the round hits is the tank firing it.
+  RayHit Raycast(Vector3 origin, Vector3 dir, float maxDist,
+                 int ignoreBrush = -1) const;
   // True when nothing solid blocks the segment (used for explosion line of sight).
   bool LineOfSight(Vector3 a, Vector3 b) const;
 

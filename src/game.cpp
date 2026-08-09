@@ -406,6 +406,53 @@ void Game::DeploySwatSquads() {
   }
 }
 
+// Anyone the vehicle you are driving goes through, straight out of
+// obj_player's entity block:
+//
+//   if distance_to_object(entity) < size and abs(z - entity.z) < 20 {
+//       if self.speed > 4 { entity.life = 0
+//                           control.shake = 5
+//                           speed = speed * 0.9
+//                           sound_play(snd_bump) } }
+//
+// Same three conditions, same three consequences. `size` is obj_car's own
+// interact radius, which is already in the vehicle table.
+void Game::RunOverPeople() {
+  if (drivingVehicle_ < 0 || drivingVehicle_ >= vehicles_.count()) return;
+  Vehicle& v = vehicles_.list()[drivingVehicle_];
+  if (v.life <= 0.0f) return;
+  const VehicleDef& d = VehicleInfo(v.kind);
+  // GTJ's threshold, and it matters: at a crawl you nudge people, and only
+  // past 4 units a tick does the car actually go through them.
+  if (fabsf(v.speed) <= 4.0f) return;
+
+  const RemotePlayer* ps = client_.players();
+  for (int i = 0; i < kMaxPlayers; ++i) {
+    if (i == client_.myId() || !ps[i].active || ps[i].cur.dead()) continue;
+    const Vector3 p = ps[i].cur.pos();
+    // Flat distance to the chassis, and the same 20 units of vertical slack
+    // GTJ allowed -- so you cannot run somebody over from a rooftop.
+    const float dx = p.x - v.pos.x, dz = p.z - v.pos.z;
+    if (dx * dx + dz * dz > d.size * d.size) continue;
+    if (fabsf(p.y - v.pos.y) >= 20.0f) continue;
+
+    // Lethal outright. The cap the server checks this against is the fists',
+    // which a hundred and fifty sits comfortably under.
+    client_.SendHit(static_cast<uint8_t>(i), 150.0f, kDeathByRoadkill, false);
+    // Thrown along the way the car was going, not away from the driver.
+    const Vector3 along = FlatForward(v.dirDeg);
+    fx_.BloodSpray(Vector3Add(p, Vector3{0, kPlayerHeight * 0.5f, 0}), along,
+                   8.0f);
+    SplatterBlood(Vector3Add(p, Vector3{0, kPlayerHeight * 0.45f, 0}), along,
+                  9.0f);
+    assets_.Play("bump", 0.9f, 0.5f, RandRange(0.9f, 1.05f));
+    shake_ = fminf(1.4f, shake_ + 0.45f);
+    v.speed *= 0.9f;
+    hitMarker_ = 0.28f;
+    hitWasHead_ = false;
+  }
+}
+
 void Game::TickStory() {
   if (!storyMode_) return;
 
@@ -810,6 +857,7 @@ void Game::Tick() {
   TickStory();
   TickVehicles(cmd);
   ResolveHostileFire();
+  RunOverPeople();
   if (storyMode_) DeploySwatSquads();
   if (drivingVehicle_ >= 0) {
     // The chassis carries the player; nothing else in the on-foot movement
@@ -1668,7 +1716,8 @@ void Game::TryFireHeli(bool pressed, bool held) {
   const float spread = 0.7f * kSpreadScale;
   const Vector3 sdir = ForwardFromAngles(lp_.yaw + RandRange(-spread, spread),
                                          lp_.viewPitch() + RandRange(-spread, spread));
-  const RayHit wh = world_.Raycast(eye, sdir, 2600.0f);
+  const RayHit wh = world_.Raycast(
+      eye, sdir, 2600.0f, vehicles_.ColliderBrush(world_, drivingVehicle_));
   float t = wh.hit ? wh.dist : 2600.0f;
   bool head = false, leg = false;
   const int hitP = TracePlayers(eye, sdir, t, &t, &head, &leg);
@@ -1692,9 +1741,17 @@ void Game::TryFireTank(bool pressed, bool held) {
   if (!InTank() || tankCooldown_ > 0 || tankReload_ > 0) return;
   Vehicle& v = vehicles_.list()[drivingVehicle_];
 
-  // The gun points where the turret points, at the pitch you are looking.
+  // The gun points where the turret points, at the pitch you are looking --
+  // and the turret tracks lp_.yaw, so that is the crosshair.
   const Vector3 dir = ForwardFromAngles(v.turretDeg, lp_.viewPitch());
   const Vector3 muzzle = vehicles_.GunMuzzle(drivingVehicle_, 4.0f);
+  // Every shot is traced from the eye along the crosshair, so rounds land
+  // where the sight says. What they must *not* do is stop on our own hull:
+  // a vehicle pushes its bounding box into the world and the commander's eye
+  // sits three units above the top of it, so aiming down even slightly put
+  // the round into the tank that fired it.
+  const int selfBrush = vehicles_.ColliderBrush(world_, drivingVehicle_);
+  const Vector3 eye = lp_.eyePos();
 
   if (tankWeapon_ == 0) {
     if (!pressed) return;                      // the main gun is not automatic
@@ -1704,25 +1761,24 @@ void Game::TryFireTank(bool pressed, bool held) {
 
     // A big plume off the muzzle: fire core, an eruption of burning gas and a
     // bank of smoke that hangs in front of the tank.
-    fx_.MuzzleFlash(muzzle, dir, 7.5f, 9.0f);
+    // Half-life on all of it: the cannon throws a lot of smoke and it was
+    // still hanging in front of the sight when the next shell went out.
+    fx_.MuzzleFlash(muzzle, dir, 7.5f, 9.0f, 0.5f);
     fx_.EmitEruption(Vector3Add(muzzle, Vector3Scale(dir, 16.0f)), 2.4f, 26, 34,
                      190.0f);
     fx_.EmitBulbousCloud(Vector3Add(muzzle, Vector3Scale(dir, 34.0f)), 2.1f, 18,
-                         3.4f);
+                         1.7f);
     AddFlashLight(muzzle, Vector3{1.5f, 1.05f, 0.5f}, 620.0f, 0.13f);
 
-    // The shell is traced from clear of our own hull, not from the muzzle.
-    // A vehicle puts its bounding box into the world so collision and
-    // raycasts treat it as solid, and once the turret is traversed away from
-    // the hull that box grows enough to swallow the end of the barrel -- so
-    // the first thing the round hit was the tank firing it, and it blew
-    // itself up on the shot.
-    const Vector3 from = vehicles_.ClearOfHull(drivingVehicle_, muzzle, dir);
-    const RayHit wh = world_.Raycast(from, dir, kTankCannonRange);
+    // Traced from the eye down the crosshair, ignoring our own hull. Firing
+    // it from the muzzle instead sent the shell along a line parallel to the
+    // sight but a hundred units off it, so it never landed on what the sight
+    // was on; the muzzle is only where the tracer and the smoke come from.
+    const RayHit wh = world_.Raycast(eye, dir, kTankCannonRange, selfBrush);
     float t = wh.hit ? wh.dist : kTankCannonRange;
     bool head = false, leg = false;
-    const int hitP = TracePlayers(from, dir, t, &t, &head, &leg);
-    const Vector3 end = Vector3Add(from, Vector3Scale(dir, t));
+    const int hitP = TracePlayers(eye, dir, t, &t, &head, &leg);
+    const Vector3 end = Vector3Add(eye, Vector3Scale(dir, t));
 
     // Same travelling tracer the rifles use, just much bigger and slower, with
     // a smoke trail laid along its path so the shell reads as a shell.
@@ -1750,18 +1806,19 @@ void Game::TryFireTank(bool pressed, bool held) {
   mgFireTick_ = tick_;
 
   const Vector3 mgMuzzle = vehicles_.GunMuzzle(drivingVehicle_, 12.0f);
-  fx_.MuzzleFlash(mgMuzzle, dir, 1.5f, 0.6f);
+  fx_.MuzzleFlash(mgMuzzle, dir, 1.5f, 0.6f, 0.5f);
   fx_.EjectCasing(mgMuzzle, dir, 1.4f);
   AddFlashLight(mgMuzzle, Vector3{1.2f, 0.85f, 0.4f}, 170.0f, 0.045f);
 
   // The gun is aimed from the eye, not from the muzzle, so every round goes
   // exactly where the crosshair is -- the tracer just leaves from the barrel
-  // and converges on the same point.
-  const Vector3 eye = lp_.eyePos();
+  // and converges on the same point. Ignoring our own collider is what makes
+  // that true: without it the round buried itself in the tank's own roof the
+  // moment the sight dipped below the horizon.
   const float spread = 0.5f * kSpreadScale;
   const Vector3 sdir = ForwardFromAngles(lp_.yaw + RandRange(-spread, spread),
                                          lp_.viewPitch() + RandRange(-spread, spread));
-  const RayHit wh = world_.Raycast(eye, sdir, 2200.0f);
+  const RayHit wh = world_.Raycast(eye, sdir, 2200.0f, selfBrush);
   float t = wh.hit ? wh.dist : 2200.0f;
   bool head = false, leg = false;
   const int hitP = TracePlayers(eye, sdir, t, &t, &head, &leg);
@@ -1801,8 +1858,13 @@ void Game::DoHitscan() {
   // Sniper and shotgun belch; the rest get a modest puff.
   const float smokeMul = (lp_.arsenal.current == WEAPON_SNIPER) ? 2.6f
                        : (lp_.arsenal.current == WEAPON_SHOTGUN) ? 2.2f : 1.0f;
+  // The sniper belches two and a half times the smoke of anything else and
+  // fires slowly enough that it used to still be there for the next shot.
+  const float smokeLife =
+      (lp_.arsenal.current == WEAPON_SNIPER) ? 0.5f : 1.0f;
   fx_.MuzzleFlash(muzzle, lp_.aimDir(),
-                  d.smokeScale > 0.0f ? d.smokeScale : 1.2f, smokeMul);
+                  d.smokeScale > 0.0f ? d.smokeScale : 1.2f, smokeMul,
+                  smokeLife);
   // Every firearm throws its brass. One case per trigger pull, not one per
   // pellet -- a shotgun ejects a single hull however much shot is in it --
   // and sized to the round it came out of.
@@ -2131,6 +2193,9 @@ void Game::ProcessEvents() {
         char buf[128];
         if (e.weapon == kDeathByFalling) {
           snprintf(buf, sizeof(buf), "%s hit the ground", nameOf(victim).c_str());
+        } else if (e.weapon == kDeathByRoadkill) {
+          snprintf(buf, sizeof(buf), "%s ran over %s", nameOf(killer).c_str(),
+                   nameOf(victim).c_str());
         } else if (victim == killer) {
           snprintf(buf, sizeof(buf), "%s blew %s up", nameOf(victim).c_str(),
                    victim == me ? "yourself" : "themselves");
@@ -2470,6 +2535,12 @@ void Game::DrawGame() {
   info.message = message_;
   info.messageTime = messageTime_;
   info.inVehicle = drivingVehicle_ >= 0;
+  if (drivingVehicle_ >= 0 && drivingVehicle_ < vehicles_.count()) {
+    const Vehicle& dv = vehicles_.list()[drivingVehicle_];
+    const VehicleDef& dd = VehicleInfo(dv.kind);
+    info.vehicleHealth = dd.maxLife > 0.0f ? dv.life / dd.maxLife : 0.0f;
+    info.vehicleName = dd.name;
+  }
   info.killFeed.assign(killFeed_.begin(), killFeed_.end());
   renderer_.DrawHud(assets_, info, hud, W, H);
 

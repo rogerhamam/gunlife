@@ -56,6 +56,12 @@ struct HudInfo {
   // In a vehicle your carried weapon is stowed, so none of the gun UI --
   // name, ammo, reload banner or the number strip -- belongs on screen.
   bool inVehicle = false;
+  // The hull you are sitting behind, 0..1, and what to call it. Drawn as its
+  // own blue bar above your own health, because behind armour the number that
+  // decides whether you are about to be on foot again is the vehicle's, not
+  // yours.
+  float vehicleHealth = 0.0f;
+  const char* vehicleName = nullptr;
 };
 
 class Renderer {

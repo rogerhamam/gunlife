@@ -57,8 +57,10 @@ const WeaponDef kWeapons[WEAPON_COUNT] = {
     320.0f, 330.0f, 1.6f, 2.0f},
 
   // SHOTGUN -- GTJ: gun_reload(50), snd_shotgun, shell-by-shell reload.
+  // 19.5 a pellet across 8: half again on the 13 it carried, which brings a
+  // clean close-range barrel from ~104 to ~156 -- one shot rather than two.
   {"Shotgun", "Shotgun", FIRE_SEMI,
-    13.0f, 50, 450.0f, 8, 5.0f, 2.0f, 2.4f,
+    19.5f, 50, 450.0f, 8, 5.0f, 2.0f, 2.4f,
     8, 40, 26, true,
     false, 70.0f, 0.0f,
     0,0,0,0, 0,0,
@@ -69,8 +71,9 @@ const WeaponDef kWeapons[WEAPON_COUNT] = {
 
   // SUPER SHOTGUN -- both barrels at once, a wall of pellets, then the long
   // break-open reload the sprite sheet animates end to end.
+  // ...and 18 a pellet across 16, up from 12, for the same reason.
   {"Super Shotgun", "Super Shotgun", FIRE_SEMI,
-    12.0f, 62, 420.0f, 16, 7.5f, 2.4f, 4.2f,
+    18.0f, 62, 420.0f, 16, 7.5f, 2.4f, 4.2f,
     2, 24, 90, false,
     false, 70.0f, 0.0f,
     0,0,0,0, 0,0,

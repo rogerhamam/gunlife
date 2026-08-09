@@ -170,6 +170,10 @@ class VehicleSystem {
   // were pushed, which is what makes the mapping possible at all.
   bool DamageByBrush(const World& world, int brushIndex, float damage,
                      int* outVehicle);
+  // Which world brush is this vehicle's collider, so a shot fired from inside
+  // it can be told to ignore it. -1 when it has none (destroyed, or the
+  // colliders have not been pushed yet this tick).
+  int ColliderBrush(const World& world, int vehicle) const;
 
   // Index of the vehicle the player at `feet` looking along `yawDeg` can get
   // into, or -1. Mirrors GTJ's distance + 45 degree facing test.

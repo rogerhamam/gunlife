@@ -506,6 +506,13 @@ bool VehicleSystem::DamageByBrush(const World& world, int brushIndex,
   return true;
 }
 
+int VehicleSystem::ColliderBrush(const World& world, int vehicle) const {
+  for (size_t slot = 0; slot < colliderVeh_.size(); ++slot)
+    if (colliderVeh_[slot] == vehicle)
+      return world.staticBrushCount() + static_cast<int>(slot);
+  return -1;
+}
+
 int VehicleSystem::hostileCount() const {
   int n = 0;
   for (const Vehicle& v : vehicles_)
@@ -853,7 +860,10 @@ Vector3 VehicleSystem::ClearOfHull(int index, Vector3 from, Vector3 dir,
   const float d3[3] = {dir.x, dir.y, dir.z};
   const float lo[3] = {mn.x, mn.y, mn.z};
   const float hi[3] = {mx.x, mx.y, mx.z};
-  float exit = 0.0f;
+  // Slab test. The ray leaves the box at the *nearest* far plane across the
+  // three axis pairs, not the furthest -- taking the max walks the launch
+  // point tens of units past the hull on any diagonal shot.
+  float exit = 1e30f;
   for (int a = 0; a < 3; ++a) {
     if (fabsf(d3[a]) < 1e-6f) {
       // Parallel to this pair of planes: if we are outside them we can never
@@ -865,8 +875,9 @@ Vector3 VehicleSystem::ClearOfHull(int index, Vector3 from, Vector3 dir,
     const float t2 = (hi[a] - o[a]) / d3[a];
     const float far = fmaxf(t1, t2);
     if (far <= 0.0f) return from;              // box is behind us
-    exit = fmaxf(exit, fminf(far, 4000.0f));
+    exit = fminf(exit, far);
   }
+  if (exit > 4000.0f) return from;
   if (exit <= 0.0f) return from;
   return Vector3Add(from, Vector3Scale(dir, exit + margin));
 }

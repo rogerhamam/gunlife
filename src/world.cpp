@@ -603,7 +603,8 @@ float World::CeilingHeight(float x, float z, float radius, float minY) const {
 
 // ------------------------------------------------------------------ raycasts
 
-RayHit World::Raycast(Vector3 origin, Vector3 dir, float maxDist) const {
+RayHit World::Raycast(Vector3 origin, Vector3 dir, float maxDist,
+                      int ignoreBrush) const {
   RayHit out;
   float nearest = maxDist;
 
@@ -615,6 +616,7 @@ RayHit World::Raycast(Vector3 origin, Vector3 dir, float maxDist) const {
   const float o[3] = {origin.x, origin.y, origin.z};
 
   for (size_t i = 0; i < brushes_.size(); ++i) {
+    if (static_cast<int>(i) == ignoreBrush) continue;
     const Brush& b = brushes_[i];
     const float mn[3] = {b.min.x, b.min.y, b.min.z};
     const float mx[3] = {b.max.x, b.max.y, b.max.z};
