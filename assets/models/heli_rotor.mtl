@@ -1,0 +1,3 @@
+newmtl heli_rotor
+Kd 1 1 1
+map_Kd heli_albedo.png

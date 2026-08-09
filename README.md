@@ -8,10 +8,21 @@ Theft Jack 3D** (`GTJ3D.gmk`). The sky, weather, explosion stack and the
 ballistic sound design are modelled on **Naval Command**, whose SFX library is
 layered on top of GTJ3D's without replacing any of it.
 
-    build.bat          compile      -> bin\kaj_shooter.exe
     play.bat           run          -> main menu
     play.bat --sp      straight into single player
     play.bat --story   straight into the wave campaign
+    build.bat          compile      -> bin\kaj_shooter.exe
+
+**A clone is playable as it stands.** `bin\kaj_shooter.exe` is committed, and
+every texture, sound, model, map and music track it loads is in `assets/`.
+Nothing the game opens at runtime lives outside this folder. raylib is in
+`vendor/`, so `build.bat` works from a clean checkout too — you need CMake,
+Ninja and a MinGW-w64 toolchain, and nothing else.
+
+The two things *not* in the repo are the sources the asset pipeline reads
+from: `GTJ3D.gmk` itself and the original 130 MB audio download. You only need
+those to re-run the staging tools, and only if you want to change what is
+staged. See *Assets*.
 
 ---
 
@@ -693,8 +704,21 @@ Sprite origins from GameMaker are preserved, so the viewmodels sit exactly where
 GTJ3D drew them: origin-anchored at (320, 224) in a 640×480 ortho space at 2×
 scale, then scaled uniformly to your window.
 
-Music streams from `assets/music`, falling back to the original GTJ3D download
-folder rather than duplicating ~130 MB of WAV. Press `M`.
+### Music
+
+    python tools/localise_music.py [--from <dir>] [--rate 22050]
+
+The four GTJ3D themes ship as 44.1 kHz stereo WAV and come to about 130 MB,
+which is why the game used to stream them straight out of the download folder
+rather than copying them in. That worked on the machine they were downloaded
+to and nowhere else: it was the one path in the whole game that reached
+outside its own directory, so a copy of the project had no soundtrack at all.
+
+This resamples them to 22.05 kHz mono — a quarter of the bytes, and behind
+gunfire the difference is not audible — and writes them into `assets/music`,
+which is now the only place the game looks. Pure Python on purpose: there is
+no ffmpeg here and `audioop` was removed in 3.13, so the stereo mix-down and
+the decimation are done by hand over an array of samples. Press `M`.
 
 ---
 

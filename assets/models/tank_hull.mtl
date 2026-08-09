@@ -1,0 +1,3 @@
+newmtl tank_hull
+Kd 1 1 1
+map_Kd tank_albedo.png

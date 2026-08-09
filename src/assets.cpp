@@ -292,14 +292,15 @@ bool Assets::Load(const std::string& assetRoot) {
     }
   }
 
-  // Music lives either in assets/music or, to avoid duplicating ~130 MB of
-  // WAV, straight out of the original GTJ3D download folder.
-  const std::string alt = root_ + "/../drive-download-20260808T053533Z-1-001/audio";
+  // Music lives in assets/music, and only there. It used to fall back to the
+  // original GTJ3D download folder to avoid duplicating 130 MB of WAV, which
+  // worked on the machine those files were downloaded to and nowhere else --
+  // it was the one path in the game that reached outside its own directory,
+  // so a copy of the project had no soundtrack. tools/localise_music.py
+  // resamples the tracks to 22 kHz mono and puts them where they belong.
   for (const char* n : kMusicNames) {
-    std::string a = root_ + "/music/" + n + ".wav";
-    std::string b = alt + "/" + n + ".wav";
-    if (FileExists(a.c_str())) musicFiles_.push_back(a);
-    else if (FileExists(b.c_str())) musicFiles_.push_back(b);
+    const std::string p = root_ + "/music/" + n + ".wav";
+    if (FileExists(p.c_str())) musicFiles_.push_back(p);
   }
 
   // GTJ3D's obj_car shell skins, plus the steering wheel it drew in front of
