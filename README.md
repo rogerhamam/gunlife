@@ -58,12 +58,30 @@ It is played on whatever map the MAP row is set to, except that the Dev Test
 Range — a flat plain with a gun line on it, and the default — is swapped for
 the Urban Complex, which is a city to fight through.
 
-The enemy armour drives itself through the same handling model you get. A
-hostile tank closes to about 700 units, tracks you with its turret and shells
-you, and will not fire through a building. A gunship holds a slow orbit at
-around 300 units up and works you over with the minigun in bursts of a dozen.
-Both take damage from anything you can throw at them — small arms scratch
+The enemy armour drives itself through the same handling model you get.
+
+* A **tank** closes to about 700 units, tracks you with its turret and shells
+  you, and will not fire through a building.
+* A **gunship** holds a slow orbit at around 300 units up and works you over
+  with the minigun in bursts of a dozen.
+* A **SWAT van** is `obj_car`'s swat block: it drives at you carrying a squad
+  and, once it is inside 340 units and has come to a stop, empties eight
+  operators into the street out of the back doors, fanning both sides. GTJ3D
+  stopped at 180 units with `irandom_range(4, 6)` aboard; this one stands off
+  a little further so the squad has room to spread rather than spawning on top
+  of you. An emptied van stops counting as a hostile — it becomes an ordinary
+  parked vehicle, which you are welcome to steal.
+
+All three take damage from anything you can throw at them — small arms scratch
 armour at a sixth rate, rockets and grenades do the job properly.
+
+The operators themselves are one side and cannot hurt each other, by rifle or
+by blast. Left on the deathmatch rule of "shoot whoever is nearest", a squad
+arriving together gunned itself down in the street before it reached anybody.
+They carry grenades and launchers as well as small arms, rate-limited per
+operator and with a minimum range on both — a bot that fires a launcher into
+somebody's chest takes the blast itself, and its own explosives are the only
+ones that can still hurt it.
 
 `--storywave <n>` starts partway up the curve, which is how the screenshot
 tests reach the armour without playing six waves first.
@@ -348,10 +366,19 @@ dedicated bullet clips with Naval Command's:
 * **Dry fire and last round** — a click on empty, a warning ping on the last
   round in the magazine.
 
-Every explosion plays exactly one report — grenades use GTJ3D's
-`snd_explosion` (the sound `obj_explosion_effect` assigned to
-`control.play_sound`), large blasts use `big_explosion`, small ones the AA
-airburst. Layering two made every explosion sound doubled.
+Every explosion plays exactly one report — layering two made every explosion
+sound doubled — and for **rockets and grenades alike** it is GTJ3D's own
+`snd_explosion`, the sound `obj_explosion_effect` assigned to
+`control.play_sound`. Rockets used to reach for Naval Command's
+`big_explosion`, which is an MP3: decoder padding puts a few milliseconds of
+silence in front of the transient, so the bang arrived after the fireball had
+already bloomed. A WAV starts on the sample it says it does, so the report
+lands on the same frame as the flash. Blasts from anything else still use
+`big_explosion` or the AA airburst by size.
+
+The pistol is a Desert Eagle recording rather than GTJ3D's `snd_handgun`: a
+hand cannon wants a report with some weight behind it, and GTJ's clip is a
+light pop.
 
 Jumping plays GTJ3D's `snd_jump` the instant you leave the ground, as it did in
 `obj_player`.
@@ -371,6 +398,21 @@ From GTJ3D's `obj_player` Step event, at a fixed 60 ticks/second:
 Crouch interpolates over ~0.2 s in each direction instead of snapping, and the
 run bob is a smoothed two-beat footfall curve — the earlier version shook hard
 enough to be distracting.
+
+**Fall damage.** GTJ3D had none — you could step off the civic tower and walk
+away, which made every rooftop a free ride down. The safe limit is set from
+the jump itself: 2.6 up against 0.15 of gravity tops out about 22 units and
+comes back down at 2.6 a tick, so anything at or under 3.0 has to cost
+nothing or your own jump would hurt you. Past that the damage goes with the
+square of the impact speed — which is proportional to the height fallen — and
+by about 8 a tick, a little over 200 units or five storeys, it is fatal.
+Nothing plays on a landing that did no damage: a thump on every touchdown
+lands a beat after `snd_jump` and reads as the jump sound firing twice.
+
+It travels as its own message (`MSG_FALL`) rather than as a hit on yourself,
+because `MSG_HIT` rejects `target == slot` outright and caps damage at what
+the named weapon could do — and no weapon-shaped cap fits a five-storey drop.
+Body armour is no help against the ground.
 
 ---
 
@@ -410,6 +452,20 @@ are still exactly the panels it built — the four that are really windows are
 drawn as glass rather than as paint, with depth writes off so the world
 outside them stays alive.
 
+The interior view is the same body and the same textures as the outside —
+you are inside the car you got into, not a stand-in for it — with a light
+cool wash over the view and a slightly stronger band round the edges, where a
+windscreen is thickest and most raked. The steering wheel is drawn after all
+of that, at its authored colour: no paint tint, no glass over it, no world
+lighting on it. It is the one piece of the driving view that is UI rather
+than scenery, and the arms on it are skin — run either through the cabin's
+tint and the hands change colour with the car.
+
+`obj_car`'s shell is still built, primitive for primitive from its create
+event, and still wears GTJ3D's own skins: it is the stand-in when a
+vehicle's `.glb` is missing, which beats the hand-stacked boxes that used to
+fill in. `interior` picks the taller cabin and frame 1 of the skin.
+
 ### The gunship
 
 The camera is welded to the airframe: the seat offset is carried by the whole
@@ -427,8 +483,26 @@ viewpoint. Two other things were making the view refuse to sit still:
   frame you got in stayed frozen into the driving camera. They are zeroed on
   entry now.
 
-Nose-down is what pulls it along, so looking down flies you forward. That sign
-was inverted, which flew the gunship backwards out of a dive.
+**Thrust follows the airframe, not the compass.** A rotor pushes at right
+angles to its disc, so tipping the nose down drives it forward *and* down, and
+pulling up climbs as it brakes; a bank slips it toward the low wing. The
+earlier version took thrust along a flat heading vector and used the pitch
+only to scale it, so the nose could be pointing anywhere and the machine still
+slid along level ground. Nose-down is what pulls it along, so looking down
+flies you forward — that sign was inverted too, which flew it backwards out of
+a dive.
+
+**Rockets leave the airframe before they arm.** A vehicle puts its bounding
+box into the world so collision and raycasts treat it as solid, and the wing
+pylons are inside that box — so a rocket detonated on the frame it was
+created, which read as the pods simply not working. The projectile is
+simulated on the server and the server knows nothing about vehicles, so the
+launch point is pushed out along the line of fire until it is clear of the
+hull (`VehicleSystem::ClearOfHull`) instead.
+
+Both gunship weapons are audible now. The minigun's burst loop only ever
+tested for the *tank's* roof gun, so the gunship fired in silence; the pods
+get a launch whoosh, a backblast, a last-round warning and a reload.
 
 **The rotor.** `split_tank.py --model heli` used to cut the airframe, and it
 got it badly wrong: its deck finder looks for the height at which the
@@ -462,9 +536,22 @@ where cars, props and interiors go later.
     box      <x> <y> <z> <sx> <sy> <sz> <texture> [tile]
     wall     <x1> <z1> <x2> <z2> <y> <height> <thickness> <texture> [tile]
     stairs   <x> <z> <sx> <sz> <y> <height> <dir> <steps> <texture>
-    building <x> <z> <sx> <sz> <y> <storeys> <storeyH> <wallTex> <floorTex>
-    tree     <x> <z> <y> <height> [seed]
-    spawn    <x> <y> <z> <yaw>
+    building  <x> <z> <sx> <sz> <y> <storeys> <storeyH> <wallTex> <floorTex>
+    townhouse <x> <z> <sx> <sz> <y> <storeys> <storeyH> <wall> <roof> <floor>
+    tree      <x> <z> <y> <height> [seed]
+    spawn     <x> <y> <z> <yaw>
+
+`townhouse` is `building` at domestic scale: the same enterable shell, but
+with a single straight flight of stairs instead of a switchback — its storeys
+are short enough that a straight run does not collide with the floor above —
+and a pitched roof instead of a flat one. Brushes are axis-aligned boxes, so
+the pitch is a stack of five narrowing slabs rather than a true wedge; from
+anywhere you can stand it reads as a gable.
+
+The vacant ground in the middle of the Urban Complex is now six office blocks
+of three to six storeys, a low civic block, and a street of twelve town
+houses. Every one of them is enterable — doors, windows, floor slabs and
+stairs all the way to the roof.
 
 ### Spawns can never be inside geometry
 
@@ -679,6 +766,10 @@ than that, those numbers will say which stage actually cost the time.
 * Story mode is single player only. The campaign runs on the client and drives
   the local server directly; a joiner would see the wave enemies but not the
   wave state.
+* The protocol carries twelve player slots, so that is the hard ceiling on
+  live enemies. A SWAT van arriving on a wave that is already at its
+  concurrent cap will put fewer than eight operators on the ground — it logs
+  how many it managed.
 * The GMK car shell is only fitted to the saloon and the SWAT van, because
   those are obj_car's own two variants. The supercar, the tank and the gunship
   keep their glTF bodies, and a supercar still gets the flat HUD steering

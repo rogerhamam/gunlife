@@ -340,13 +340,25 @@ void VehicleSystem::Tick(World& world, int driven, const DriveInput& in) {
       else if (in.right) { slide = 1.0f; v.rollDeg += (18.0f - v.rollDeg) * 0.12f; }
       else v.rollDeg *= 0.9f;
 
+      // Thrust follows the airframe, not the compass. A rotor pushes at right
+      // angles to its disc, so tipping the nose down drives it forward *and*
+      // down, and pulling the nose up climbs as it brakes. The old version
+      // took the thrust along a flat heading vector and used the pitch only
+      // to scale it, which meant the nose could be pointing anywhere and the
+      // machine still slid along level ground.
       const float rad = DegToRadF(v.dirDeg);
-      const Vector3 fwd{cosf(rad), 0.0f, -sinf(rad)};
-      const Vector3 rt{-sinf(rad), 0.0f, -cosf(rad)};
+      const float p = DegToRadF(v.pitchDeg);      // positive = nose down
+      const Vector3 fwd{cosf(rad) * cosf(p), -sinf(p), -sinf(rad) * cosf(p)};
+      const Vector3 rt = FlatRight(v.dirDeg);
+      // A banked helicopter slips toward the low wing. The strafe keys set
+      // the bank, so both act the same way and the drift reads as the turn.
+      const float bank = sinf(DegToRadF(v.rollDeg));
+      const float lateral = slide * 3.4f + bank * fabsf(v.speed) * 0.35f;
       Vector3 next = v.pos;
-      next.x += fwd.x * v.speed + rt.x * slide * 3.4f;
-      next.z += fwd.z * v.speed + rt.z * slide * 3.4f;
-      next.y += v.vy;
+      next.x += fwd.x * v.speed + rt.x * lateral;
+      next.z += fwd.z * v.speed + rt.z * lateral;
+      // The collective and the vertical component of the thrust stack.
+      next.y += v.vy + fwd.y * v.speed;
 
       // Nothing fancy for collision in the air: refuse to enter solid, and
       // never sink through the ground.
@@ -519,6 +531,8 @@ int VehicleSystem::SpawnHostile(const World& world, int kind, Vector3 at,
   v.dirDeg = 0.0f;
   v.turretDeg = 0.0f;
   v.spool = kind == VEH_HELI ? 1.0f : 0.0f;
+  // A van rolls up with a full squad aboard.
+  if (kind == VEH_VAN) v.occupants = kSwatSquad;
   vehicles_.push_back(v);
   accel_.push_back(RandBetween(d.accelMin, d.accelMax));
   maxSpeed_.push_back(
@@ -589,6 +603,56 @@ void VehicleSystem::DriveHostile(World& world, size_t index) {
       v.firedWeapon = 1;
       v.fireFrom = muzzle;
       v.fireAt = threat_;
+    }
+    return;
+  }
+
+  // --- SWAT van -----------------------------------------------------------
+  // obj_car's swat block: drive at the player carrying a squad, and once you
+  // are close enough stop dead and put them in the street. GTJ3D used 180
+  // units and `occupants = irandom_range(4, 6)`; this one carries eight and
+  // stops a little further out so the squad has room to fan out rather than
+  // spawning on top of you.
+  if (v.kind == VEH_VAN) {
+    constexpr float kDropRange = 340.0f;
+    float diffV = fmodf(wantYaw - v.dirDeg + 540.0f, 360.0f) - 180.0f;
+    if (!v.deployed) {
+      const float turn = fminf(fabsf(diffV), d.turning);
+      v.dirDeg += diffV < 0.0f ? -turn : turn;
+      // Full pelt until it is in range, then everything on the brakes.
+      const float want = flat > kDropRange ? maxSpeed_[index] : 0.0f;
+      v.speed += (want - v.speed) * (accel_[index] + 0.06f);
+      if (want == 0.0f) v.speed *= 0.82f;
+      if (flat <= kDropRange && fabsf(v.speed) < 1.2f) {
+        v.speed = 0.0f;
+        v.deployed = true;
+        v.dropOff = v.occupants;      // Game reads this and spawns the squad
+        v.occupants = 0;
+      }
+    } else {
+      v.speed *= 0.7f;                // parked, with the squad out
+    }
+
+    if (fabsf(v.speed) > 0.0001f) {
+      const float rad = DegToRadF(v.dirDeg);
+      const Vector3 step{cosf(rad) * v.speed, 0.0f, -sinf(rad) * v.speed};
+      const float rSelf = fmaxf(d.width, d.length + d.frontLength) * 0.5f;
+      world.SetVehicleColliders({});
+      bool hit = false;
+      Vector3 next = world.SlideMove(v.pos, step, rSelf * 0.72f, d.height, &hit);
+      next.y = world.GroundHeight(next.x, next.z, rSelf * 0.6f, v.pos.y + 24.0f);
+      v.pos = next;
+      if (hit) {
+        v.speed *= 0.4f;
+        v.dirDeg += RandBetween(-22.0f, 22.0f);
+        // A van that has wedged itself somewhere still has a squad aboard.
+        // Let them out rather than leaving them in a box against a wall.
+        if (!v.deployed && flat < kDropRange * 2.4f) {
+          v.deployed = true;
+          v.dropOff = v.occupants;
+          v.occupants = 0;
+        }
+      }
     }
     return;
   }
@@ -728,6 +792,41 @@ Vector3 VehicleSystem::SeatPos(int index) const {
   const float rad = DegToRadF(v.kind == VEH_TANK ? v.turretDeg : v.dirDeg);
   return Vector3{v.pos.x - cosf(rad) * back, v.pos.y + d.seatHeight,
                  v.pos.z + sinf(rad) * back};
+}
+
+Vector3 VehicleSystem::ClearOfHull(int index, Vector3 from, Vector3 dir,
+                                   float margin) const {
+  if (index < 0 || index >= count()) return from;
+  Vector3 mn, mx;
+  VehicleBounds(vehicles_[index], &mn, &mx);
+  // Grow the box a little so a launch point that is merely touching the skin
+  // still gets pushed clear.
+  const float pad = 2.0f;
+  mn = Vector3SubtractValue(mn, pad);
+  mx = Vector3AddValue(mx, pad);
+
+  // Slab test for where the ray leaves the box. If the start is outside
+  // already, `exit` comes back at or below zero and nothing moves.
+  const float o[3] = {from.x, from.y, from.z};
+  const float d3[3] = {dir.x, dir.y, dir.z};
+  const float lo[3] = {mn.x, mn.y, mn.z};
+  const float hi[3] = {mx.x, mx.y, mx.z};
+  float exit = 0.0f;
+  for (int a = 0; a < 3; ++a) {
+    if (fabsf(d3[a]) < 1e-6f) {
+      // Parallel to this pair of planes: if we are outside them we can never
+      // be inside the box at all.
+      if (o[a] < lo[a] || o[a] > hi[a]) return from;
+      continue;
+    }
+    const float t1 = (lo[a] - o[a]) / d3[a];
+    const float t2 = (hi[a] - o[a]) / d3[a];
+    const float far = fmaxf(t1, t2);
+    if (far <= 0.0f) return from;              // box is behind us
+    exit = fmaxf(exit, fminf(far, 4000.0f));
+  }
+  if (exit <= 0.0f) return from;
+  return Vector3Add(from, Vector3Scale(dir, exit + margin));
 }
 
 Vector3 VehicleSystem::GunMuzzle(int index, float extraHeight) const {

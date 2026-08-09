@@ -53,6 +53,10 @@ struct VehicleDef {
 
 const VehicleDef& VehicleInfo(int kind);
 
+// How many operators a hostile SWAT van carries. obj_car rolled
+// `irandom_range(4, 6)`; a full squad reads better as a set-piece arrival.
+constexpr int kSwatSquad = 8;
+
 // What the driver is holding down this tick.
 struct DriveInput {
   bool fwd = false, back = false, left = false, right = false;
@@ -107,6 +111,16 @@ struct Vehicle {
   int firedWeapon = -1;        // -1 nothing, 0 cannon, 1 machine gun
   Vector3 fireFrom{}, fireAt{};
 
+  // SWAT van only. obj_car's swat block: it drove at you carrying `occupants`
+  // and, once it was close enough, stopped dead and emptied them into the
+  // street. Same here, at eight -- a full squad.
+  int occupants = 0;
+  // Set to the number to put on the ground for exactly one tick, once the van
+  // has stopped. Game does the spawning, because the operators are server bot
+  // slots and VehicleSystem has no business knowing about those.
+  int dropOff = 0;
+  bool deployed = false;
+
   // Non-zero for one tick after a collision, so the caller can shake the
   // screen and play the crash sound without the vehicle owning audio.
   float crashImpulse = 0.0f;
@@ -150,6 +164,16 @@ class VehicleSystem {
   Vector3 SeatPos(int index) const;
   // Muzzle of the tank's main gun, given the turret's current heading.
   Vector3 GunMuzzle(int index, float extraHeight) const;
+
+  // Pushes a launch point out along `dir` until it is clear of this vehicle's
+  // own collider, plus a margin. A vehicle puts its bounding box into the
+  // world so collision and raycasts treat it as solid, which is exactly what
+  // a rocket leaving its own wing pylon runs into: it spawns inside the box
+  // and detonates on the frame it is created. The projectile is
+  // server-simulated and the server knows nothing about vehicles, so the fix
+  // has to be to launch from outside the box in the first place.
+  Vector3 ClearOfHull(int index, Vector3 from, Vector3 dir,
+                      float margin = 14.0f) const;
 
   // `skip` is the vehicle the camera is sitting inside; drawing it would put
   // the far side of its own bodywork across the view.

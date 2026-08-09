@@ -121,6 +121,8 @@ class Game {
   void TickStory();
   void SpawnWaveArmour();
   void ResolveHostileFire();
+  // A stopped SWAT van empties its squad into the street.
+  void DeploySwatSquads();
   // Hostiles still standing: bots plus armour. What decides a wave is over.
   int EnemiesAlive() const;
 

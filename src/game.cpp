@@ -325,6 +325,43 @@ void Game::ResolveHostileFire() {
   }
 }
 
+// A SWAT van that has stopped puts its squad into the street. They are
+// ordinary bot slots, so they shoot, die and gib exactly like the rest of a
+// wave -- they just arrive by road rather than walking in from a spawn.
+void Game::DeploySwatSquads() {
+  const StoryWave& w = story_.spec();
+  for (Vehicle& v : vehicles_.list()) {
+    if (v.dropOff <= 0) continue;
+    const int n = v.dropOff;
+    v.dropOff = 0;
+    const VehicleDef& d = VehicleInfo(v.kind);
+    // Out of the back doors, fanning both sides of the van.
+    const float rad = DegToRadF(v.dirDeg);
+    const Vector3 back{-cosf(rad), 0.0f, sinf(rad)};
+    const Vector3 side = FlatRight(v.dirDeg);
+    int placed = 0;
+    for (int i = 0; i < n; ++i) {
+      const float along = (d.length + d.frontLength) * 0.5f + 14.0f +
+                          (i / 2) * 22.0f;
+      const float across = ((i % 2) ? 1.0f : -1.0f) * (16.0f + (i / 2) * 5.0f);
+      Vector3 at = Vector3Add(v.pos, Vector3Add(Vector3Scale(back, along),
+                                                Vector3Scale(side, across)));
+      at = world_.FindClearPoint(Vector3{at.x, v.pos.y, at.z});
+      if (server_.SpawnBotAt(at, v.dirDeg + 180.0f, w.skill, w.health))
+        ++placed;
+    }
+    if (placed > 0) {
+      assets_.PlayAt("car_door", v.pos, lp_.eyePos(), lp_.yaw, 1800.0f, 0.8f);
+      SetMessage("SWAT deploying", 2.0f);
+      TraceLog(LOG_INFO, "STORY: SWAT van dropped %d operators", placed);
+    }
+    // An empty van is no longer a threat: it stops holding the wave open and
+    // becomes an ordinary parked vehicle -- which you are welcome to steal.
+    v.hostile = false;
+    v.ai = false;
+  }
+}
+
 void Game::TickStory() {
   if (!storyMode_) return;
 
@@ -720,6 +757,7 @@ void Game::Tick() {
   TickStory();
   TickVehicles(cmd);
   ResolveHostileFire();
+  if (storyMode_) DeploySwatSquads();
   if (drivingVehicle_ >= 0) {
     // The chassis carries the player; nothing else in the on-foot movement
     // path should run while we are in it.
@@ -730,6 +768,10 @@ void Game::Tick() {
         // armament instead: 0 the main gun, 1 the roof machine gun.
         tankWeapon_ = debugFireWeapon_ == 1 ? 1 : 0;
         TryFireTank(true, true);
+      } else if (InHeli()) {
+        // ...and the gunship's: 0 the minigun, 1 the rocket pods.
+        tankWeapon_ = debugFireWeapon_ == 1 ? 1 : 0;
+        TryFireHeli(true, true);
       } else {
         lp_.arsenal.current = static_cast<uint8_t>(debugFireWeapon_);
         lp_.arsenal.cur().reserve = 99;
@@ -772,11 +814,10 @@ void Game::Tick() {
         shake_ = fmaxf(shake_, Clampf(dmg / 30.0f, 0.3f, 2.2f));
         assets_.Play(dmg > 45.0f ? "hurt2" : "hurt", 0.7f, 0.5f,
                      RandRange(0.94f, 1.06f));
-        assets_.Play("bump", Clampf(dmg / 50.0f, 0.3f, 0.9f), 0.5f, 0.8f);
-      } else if (lp_.landImpact > 2.0f) {
-        // A hard but harmless landing still makes a noise.
-        assets_.Play("bump", 0.22f, 0.5f, RandRange(1.0f, 1.15f));
       }
+      // Deliberately nothing on a landing that did no damage. A thump on
+      // every touchdown lands a beat after snd_jump and reads as the jump
+      // sound playing twice.
     }
   }
 
@@ -1051,9 +1092,13 @@ void Game::TickVehicles(const InputCommand& in) {
   }
 
   // The machine gun's burst loop follows the rounds: alive while they are
-  // going out, cut within a couple of ticks of the trigger coming up.
-  const bool mgOn = InTank() && tankWeapon_ == 1 && tankReload_ == 0 &&
-                    tick_ - mgFireTick_ < 5;
+  // going out, cut within a couple of ticks of the trigger coming up. It
+  // covers the gunship's minigun as well as the tank's roof gun -- the
+  // gunship had no firing sound at all, because this test only ever looked
+  // at the tank.
+  const bool mgOn = tankReload_ == 0 && tick_ - mgFireTick_ < 5 &&
+                    ((InTank() && tankWeapon_ == 1) ||
+                     (InHeli() && tankWeapon_ == 0));
   if (mgOn && !mgLoop_) { assets_.PlayLoop("tank_mg", 0.55f); mgLoop_ = true; }
   else if (mgOn) assets_.SetLoopVolume("tank_mg", 0.55f);
   else if (mgLoop_) { assets_.StopLoop("tank_mg"); mgLoop_ = false; }
@@ -1331,21 +1376,42 @@ void Game::TryFireHeli(bool pressed, bool held) {
   if (tankWeapon_ == 1) {
     // --- rocket pods, ten a side -----------------------------------------
     if (!pressed) return;
-    if (heliRockets_ <= 0) { tankReload_ = kHeliRocketReload; return; }
+    if (heliRockets_ <= 0) {
+      tankReload_ = kHeliRocketReload;
+      assets_.Play("beep2", 0.35f, 0.5f, 0.7f);
+      assets_.Play("reload", 0.55f, 0.5f, 0.78f);
+      return;
+    }
     --heliRockets_;
     tankCooldown_ = kHeliRocketCooldown;
+    // The pylon is inside the gunship's own collider -- a rocket launched
+    // from it detonated on the frame it was created, which read as the pods
+    // simply not working. Launch from where the round actually leaves the
+    // airframe instead.
+    const Vector3 launch = vehicles_.ClearOfHull(drivingVehicle_, hard, aim);
     // Exactly the launcher the player carries, so the warhead, blast and
     // trail all behave the way they do on foot.
-    client_.SendFire(WEAPON_ROCKET, hard, aim, Vector3{0, 0, 0});
-    assets_.Play("rocket_fire", 0.85f, 0.5f, RandRange(0.94f, 1.04f));
+    client_.SendFire(WEAPON_ROCKET, launch, aim, Vector3{0, 0, 0});
+    assets_.Play("rocket_fire", 0.95f, 0.5f, RandRange(0.94f, 1.04f));
+    // The launch itself: a hard whoosh off the rail, plus the backblast out
+    // of the rear of the tube that the player's own launcher gets.
+    assets_.Play("swing", 0.5f, 0.5f, RandRange(0.7f, 0.85f));
     fx_.MuzzleFlash(hard, aim, 3.4f, 3.0f);
+    fx_.MuzzleFlash(hard, Vector3Negate(aim), 2.0f, 2.2f);
     AddFlashLight(hard, Vector3{1.35f, 0.95f, 0.45f}, 300.0f, 0.08f);
+    shake_ = fminf(1.0f, shake_ + 0.18f);
+    if (heliRockets_ == 0) assets_.Play("lastshot", 0.45f);
     return;
   }
 
   // --- minigun -------------------------------------------------------------
   if (!held && !pressed) return;
-  if (heliBelt_ <= 0) { tankReload_ = kHeliMgReload; return; }
+  if (heliBelt_ <= 0) {
+    tankReload_ = kHeliMgReload;
+    assets_.Play("beep2", 0.35f, 0.5f, 0.7f);
+    assets_.Play("reload", 0.6f);
+    return;
+  }
   --heliBelt_;
   tankCooldown_ = kTankMgCooldown;      // 3 ticks = 1200 rounds a minute
   mgFireTick_ = tick_;

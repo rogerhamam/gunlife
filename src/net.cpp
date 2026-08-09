@@ -232,6 +232,36 @@ int Server::aliveBots() const {
   return n;
 }
 
+bool Server::SpawnBotAt(Vector3 pos, float yawDeg, float skill, float health) {
+  static const char* kSquad[] = {"Alpha", "Bravo", "Charlie", "Delta",
+                                 "Echo", "Foxtrot", "Golf", "Hotel"};
+  for (int i = kMaxPlayers - 1; i >= 1; --i) {
+    ServerSlot& s = slots_[i];
+    if (s.used) continue;
+    s = ServerSlot{};
+    s.used = true;
+    s.bot = true;
+    s.botArsenal.ResetFull();
+    s.botSkill = Clampf(skill, 0.0f, 1.0f);
+    s.botHealth = health;
+    s.state = PlayerState{};
+    s.state.id = static_cast<uint8_t>(i);
+    s.state.active = 1;
+    s.state.team = 1;
+    snprintf(s.state.name, sizeof(s.state.name), "[SWAT] %s", kSquad[i % 8]);
+    // Placed, not spawned: RespawnPlayer would send it off to a spawn point
+    // on the far side of the map, and the whole point of a van is that the
+    // squad arrives where the van stopped.
+    RespawnPlayer(i);
+    s.state.setPos(pos);
+    s.state.yaw = yawDeg;
+    s.state.pitch = 0.0f;
+    BroadcastRoster();
+    return true;
+  }
+  return false;
+}
+
 int Server::SetBotPopulation(int want, float skill, float health) {
   static const char* kNames[] = {"Rook", "Vex", "Dice", "Marlow", "Sable",
                                  "Quill", "Hark", "Nyx", "Corvo", "Wren",
@@ -440,9 +470,17 @@ void Server::ApplyBlast(Vector3 pos, float radius, float damage, int owner,
   ev.weapon = static_cast<uint8_t>(weapon);
   PushEvent(ev);
 
+  const bool ownerIsBot =
+      owner >= 0 && owner < kMaxPlayers && slots_[owner].used && slots_[owner].bot;
+
   for (int i = 0; i < kMaxPlayers; ++i) {
     ServerSlot& s = slots_[i];
     if (!s.used || s.state.dead()) continue;
+    // A bot's own explosives never hurt the rest of the squad -- now that
+    // they throw grenades and carry launchers, one careless rocket would take
+    // out half a wave. It still hurts the thrower, which is what stops them
+    // firing a launcher into a wall a foot in front of their face.
+    if (ownerIsBot && s.bot && i != owner) continue;
     const Vector3 center =
         Vector3Add(s.state.pos(), Vector3{0, s.state.height() * 0.5f, 0});
     const float dist = Vector3Distance(center, pos);
@@ -590,11 +628,11 @@ void Server::UpdateBots() {
       float best = 1e9f;
       for (int j = 0; j < kMaxPlayers; ++j) {
         if (j == i || !slots_[j].used || slots_[j].state.dead()) continue;
-        // Wave enemies are all one squad and are here for the player. Left on
-        // the deathmatch rule of "shoot whoever is nearest", a wave arriving
-        // together would gun each other down in the street before it reached
-        // anybody.
-        if (!botRespawn_ && slots_[j].bot) continue;
+        // Bots are one side. Left on the deathmatch rule of "shoot whoever
+        // is nearest", a squad arriving together guns itself down in the
+        // street before it reaches anybody -- which is what the kill feed
+        // was full of.
+        if (slots_[j].bot) continue;
         const float d = Vector3Distance(s.state.pos(), slots_[j].state.pos());
         if (d < best && world_ &&
             world_->LineOfSight(Vector3Add(s.state.pos(), Vector3{0, kPlayerEye, 0}),
@@ -643,6 +681,49 @@ void Server::UpdateBots() {
       wish = Vector3Add(Vector3Scale(fwd, approach * 2.1f),
                         Vector3Scale(right, s.botStrafe * 1.6f));
 
+      // ---- grenades and launchers ---------------------------------------
+      // Rate-limited per bot rather than by ammunition, so a squad lays down
+      // the occasional rocket instead of a constant barrage. Both have a
+      // minimum range: a bot that fires a launcher into somebody's chest
+      // takes the blast itself, and its own explosives are the only ones
+      // that can still hurt it.
+      if (s.botHeavyDelay > 0) --s.botHeavyDelay;
+      if (s.botHeavyDelay == 0 && fabsf(diff) < 10.0f) {
+        int heavy = -1;
+        if (dist > 300.0f && dist < 1500.0f && GetRandomValue(0, 1) == 0)
+          heavy = WEAPON_ROCKET;
+        else if (dist > 170.0f && dist < 620.0f)
+          heavy = WEAPON_GRENADE;
+
+        if (heavy >= 0 && world_ && world_->LineOfSight(me, t.eyePos())) {
+          // Better shots lead less badly and reload quicker.
+          s.botHeavyDelay = 210 + GetRandomValue(0, 260) -
+                            static_cast<int>(s.botSkill * 120.0f);
+          // A grenade is lobbed: aim above the target and let gravity bring
+          // it down. A rocket flies flat.
+          Vector3 aim = Vector3Normalize(to);
+          if (heavy == WEAPON_GRENADE)
+            aim = Vector3Normalize(
+                Vector3Add(aim, Vector3{0.0f, 0.18f + dist / 4000.0f, 0.0f}));
+          const float sp = 3.0f - s.botSkill * 1.8f;
+          aim = Vector3Normalize(Vector3Add(
+              aim, Vector3{RandRange(-sp, sp) * 0.017f,
+                           RandRange(-sp, sp) * 0.017f,
+                           RandRange(-sp, sp) * 0.017f}));
+
+          NetEvent fe;
+          fe.type = EV_FIRE;
+          fe.a = static_cast<uint8_t>(i);
+          fe.weapon = static_cast<uint8_t>(heavy);
+          fe.x = me.x; fe.y = me.y; fe.z = me.z;
+          fe.dx = aim.x; fe.dy = aim.y; fe.dz = aim.z;
+          PushEvent(fe);
+          SpawnProjectile(i, heavy, me, aim);
+          s.state.weapon = static_cast<uint8_t>(heavy);
+          s.botFireDelay = 40;      // shoulder the rifle again afterwards
+        }
+      }
+
       // Fire when roughly on target. Skill tightens the cone they will open
       // up from, shortens the pause between bursts and tightens the spread.
       const float aimGate = 9.0f - s.botSkill * 5.0f;
@@ -680,9 +761,10 @@ void Server::UpdateBots() {
           }
           for (int j = 0; j < kMaxPlayers; ++j) {
             if (j == i || !slots_[j].used || slots_[j].state.dead()) continue;
-            // ...and their rounds pass through each other too, so a wave does
-            // not thin itself out by shooting through its own front rank.
-            if (!botRespawn_ && slots_[j].bot) continue;
+            // ...and their rounds pass through each other too, so a squad
+            // does not thin itself out by shooting through its own front
+            // rank.
+            if (slots_[j].bot) continue;
             const PlayerState& ps = slots_[j].state;
             const Vector3 base = ps.pos();
             const float hgt = ps.height();

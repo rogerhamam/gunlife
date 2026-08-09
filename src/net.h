@@ -143,6 +143,10 @@ struct ServerSlot {
   // of the range, which is what they always effectively were.
   float botSkill = 0.5f;
   float botHealth = kMaxHealth;
+  // Ticks until this one may reach for a grenade or a launcher again. Heavy
+  // weapons are rate-limited per bot rather than by ammunition, so a squad
+  // lays down the occasional rocket instead of a constant barrage.
+  int botHeavyDelay = 0;
 };
 
 class Server {
@@ -165,6 +169,10 @@ class Server {
   // Adds or removes bots to reach `want` live ones. Returns how many were
   // added. Never touches a human slot.
   int SetBotPopulation(int want, float skill, float health);
+  // Puts one bot on the ground at a given point rather than at a spawn, for
+  // a SWAT van emptying its squad into the street. Returns false when there
+  // is no free slot. `skill` and `health` match SetBotPopulation's.
+  bool SpawnBotAt(Vector3 pos, float yawDeg, float skill, float health);
   // How many bots are alive right now. Dead-but-waiting-to-respawn do not
   // count, so a wave ends when the last one falls rather than when its body
   // finishes its respawn timer.
