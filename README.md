@@ -74,7 +74,12 @@ The enemy armour drives itself through the same handling model you get.
 * A **tank** closes to about 700 units, tracks you with its turret and shells
   you, and will not fire through a building.
 * A **gunship** holds a slow orbit at around 300 units up and works you over
-  with the minigun in bursts of a dozen.
+  with the minigun in bursts of a dozen, and puts a rocket in on every third
+  pass. You can see and hear all of it: the minigun had no tracer and no muzzle
+  flash at all, so one working you over from four hundred units up was
+  invisible except for the damage, and its rotor only ever looped for the
+  machine *you* were sitting in, so a hostile one overhead was silent until it
+  opened fire. Both now carry from a long way off.
 * A **SWAT van** is `obj_car`'s swat block: it drives at you carrying a squad
   and, once it is inside 340 units and has come to a stop, empties eight
   operators into the street out of the back doors, fanning both sides. GTJ3D
@@ -154,10 +159,36 @@ do ×4 and leg shots ×0.75.
 | 7 | Rocket Launcher | projectile | 120 blast | 120t | 1 | speed 8/tick, radius 110 |
 | 8 | Grenade | projectile | 100 blast | 80t | ×4 | speed 6 +2.5 lift, gravity 0.2 |
 | 9 | Proximity Mine | placed | 115 blast | 60t | ×3 | arms after 1 s, 46 u trigger |
-| 0 | Tripflare | placed | 90 blast | 60t | ×3 | laser beam along the surface |
+| 0 | Smoke Grenade | projectile | none | 70t | ×3 | pops, then 15 s of screen; blinds the AI |
 
 The semi-auto marksman rifle was removed; the sniper covers that role. Semi-auto
-*fire* is still how the pistol, shotgun and sniper work.
+*fire* is still how the pistol, shotgun and sniper work. The tripflare was
+removed too, and the smoke grenade took its slot.
+
+### Smoke
+
+Thrown like a frag, a little harder and flatter, because you want it landing
+where you are *going* rather than at your feet. It pops rather than detonating
+— a small report and a burst, no fireball, no shockwave, no damage at all —
+and then the canister sits where it stopped and vents for fifteen seconds.
+It is drawn the whole time it is venting, so you can see where the cloud is
+coming from and roughly how much of it is left.
+
+The cloud is fed continuously rather than dropped in one puff at pop time: a
+single puff gives a static ball that hangs there and then blinks out, whereas
+a steady feed of plumes thrown in every direction billows outward and keeps
+moving. It goes hard for the first three quarters of a second as the canister
+blows off, holds, and tails away over the last four seconds. Emission runs on
+a fixed 30 Hz cadence rather than per frame, so the cloud is the same density
+at 30 fps as at 500.
+
+**The AI genuinely cannot see through it.** A bot picking a target tests line
+of sight against the world *and* against the smoke, so a canister between you
+and a squad breaks their lock as surely as a wall does — and because they
+re-target every dozen ticks, stepping into it loses you. What the AI tests is
+not the particle cloud, which is a client-side thing: it is a sphere round the
+canister that blooms over the first second and thins over the last three, so
+both ends of the connection agree on where the smoke is.
 
 Rockets and grenades detonate on contact, as GTJ3D's `obj_bullet` and
 `obj_grenade` did. The grenade detonation uses `snd_explosion` — the sound
@@ -212,6 +243,18 @@ Your own mines and tripflares ignore you.
   quad whose winding follows whichever way its surface normal points, so with
   culling on the marks vanished from every wall that came out clockwise and
   survived only at corners, where the adjacent face saved them.
+
+  **A hole hugs what it is on.** Two things do that. The standoff that keeps a
+  decal out of its wall's depth-test tolerance is applied at *draw* time and
+  scaled by camera distance — a fraction of a unit up close, opening up only
+  far enough away that nobody can see the gap. That emulates `glPolygonOffset`,
+  which rlgl does not expose; baking a fixed 1.2 units in meant a hole visibly
+  hovered proud of the brickwork as you walked up to it. And the mark follows
+  the round in: the travel direction is projected onto the face, and the hole
+  is oriented down that line and stretched by how shallow the impact was, up to
+  three and a half times as long as it is wide. A square hit still gets the
+  random roll it always had, so repeated shots do not stamp an identical
+  sprite.
 * **Firing animations are per weapon, not per cooldown.** GTJ3D stretched the
   animation across the whole reload delay, which left the sniper holding its
   muzzle flash for a second and a half. Each weapon now names its own animation

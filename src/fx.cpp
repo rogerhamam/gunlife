@@ -878,10 +878,20 @@ void FxSystem::ShellTracer(Vector3 a, Vector3 b, Vector3 dir) {
 // firefight in a doorway used to start eating its own splatter within
 // seconds. A decal is one camera-facing quad, so the budget is cheap to
 // raise.
+// A depth bias in world units. Emulates glPolygonOffset, which rlgl does not
+// expose: the gap a decal needs to beat the depth buffer grows with distance,
+// because depth precision falls off with it. Near the camera this is a
+// fraction of a unit -- the mark is flush against the surface and reads as
+// part of it -- and it only opens up far enough away that nobody can see the
+// gap anyway.
+float DecalStandoff(float cameraDistance) {
+  return Clampf(cameraDistance * 0.0022f, 0.05f, 1.6f);
+}
+
 void FxSystem::AddDecal(Vector3 p, Vector3 n, float size, Color c, float life) {
   if (decals_.size() > kMaxDecals) decals_.erase(decals_.begin());
   Decal d;
-  d.pos = Vector3Add(p, Vector3Scale(n, 0.4f));
+  d.pos = p;                       // on the surface; standoff is applied later
   d.normal = n;
   Vector3 u = fabsf(n.y) > 0.9f ? Vector3{1, 0, 0} : Vector3{0, 1, 0};
   d.right = Vector3Normalize(Vector3CrossProduct(n, u));
@@ -896,24 +906,45 @@ void FxSystem::AddDecal(Vector3 p, Vector3 n, float size, Color c, float life) {
 // A lasting mark where a round struck. These outlive everything else so a
 // firefight leaves the wall visibly chewed up.
 void FxSystem::AddBulletHole(Vector3 p, Vector3 n, Vector3 faceMin,
-                             Vector3 faceMax) {
+                             Vector3 faceMax, Vector3 inDir) {
   if (decals_.size() > kMaxDecals) decals_.erase(decals_.begin());
   Decal d;
-  // Stand the mark well clear of the face it belongs to. At 0.35 units the
-  // quad was inside the depth-test tolerance of the wall and only the corners
-  // -- where two faces meet and the offset doubles up -- ever showed.
-  d.pos = Vector3Add(p, Vector3Scale(n, 1.2f));
+  // The mark sits *on* the wall. The standoff that keeps it out of the wall's
+  // depth-test tolerance is applied at draw time and scales with camera
+  // distance -- see DecalStandoff. Baking 1.2 units in here is what made a
+  // hole hover visibly proud of the brickwork when you walked up to it.
+  d.pos = p;
   d.normal = n;
   Vector3 u = fabsf(n.y) > 0.9f ? Vector3{1, 0, 0} : Vector3{0, 1, 0};
   d.right = Vector3Normalize(Vector3CrossProduct(n, u));
-  // Random roll so repeated hits do not stamp an identical sprite.
-  const float rot = Fr01() * 2.0f * PI;
-  const Vector3 up = Vector3CrossProduct(n, d.right);
-  d.right = Vector3Add(Vector3Scale(d.right, cosf(rot)),
-                       Vector3Scale(up, sinf(rot)));
+  // The mark follows the round in. Project the travel direction onto the
+  // face: that is the line the bullet was scraping along, so the hole is
+  // oriented down it and stretched by how shallow the impact was. A square
+  // hit keeps the random roll it always had, so repeated shots into a wall do
+  // not stamp an identical sprite.
+  float graze = 0.0f;
+  const float dirLen = Vector3Length(inDir);
+  if (dirLen > 1e-4f) {
+    const Vector3 dir = Vector3Scale(inDir, 1.0f / dirLen);
+    // cos of the angle off the surface normal: 1 dead-on, 0 parallel.
+    const float square = fabsf(Vector3DotProduct(dir, n));
+    Vector3 along = Vector3Subtract(dir, Vector3Scale(n, Vector3DotProduct(dir, n)));
+    if (Vector3LengthSqr(along) > 1e-6f) {
+      d.right = Vector3Normalize(along);
+      graze = Clampf(1.0f - square, 0.0f, 1.0f);
+    }
+  }
+  if (graze < 0.15f) {
+    const float rot = Fr01() * 2.0f * PI;
+    const Vector3 up0 = Vector3CrossProduct(n, d.right);
+    d.right = Vector3Add(Vector3Scale(d.right, cosf(rot)),
+                         Vector3Scale(up0, sinf(rot)));
+  }
   d.size = 1.7f + Fr01() * 0.9f;
-  d.halfX = d.size;
-  d.halfY = d.size;
+  // Up to three and a half times as long as it is wide at a full graze, and
+  // a little narrower with it -- the round is skipping off, not digging in.
+  d.halfX = d.size * (1.0f + graze * graze * 2.5f);
+  d.halfY = d.size * (1.0f - graze * 0.35f);
 
   // Trim the mark to the face it landed on. A hole punched near an edge used
   // to hang half of itself out past the corner, floating in mid-air; now the
@@ -1408,6 +1439,10 @@ void FxSystem::Draw(const Camera3D& cam) {
     Color c = d.color;
     c.a = static_cast<unsigned char>(a * 255.0f);
     const Vector3 n = d.normal;
+    // Lift it off its surface by just enough to win the depth test at this
+    // range and no more, so up close it is flush against the wall and from
+    // across the map it still draws.
+    const Vector3 pos = Vector3Add(d.pos, Vector3Scale(n, DecalStandoff(dist)));
     const Vector3 rx = Vector3Scale(d.right, d.halfX);
     const Vector3 ry = Vector3Scale(
         Vector3Normalize(Vector3CrossProduct(n, d.right)), d.halfY);
@@ -1417,13 +1452,13 @@ void FxSystem::Draw(const Camera3D& cam) {
     rlColor4ub(c.r, c.g, c.b, c.a);
     rlNormal3f(n.x, n.y, n.z);
     Vector3 v;
-    v = Vector3Subtract(Vector3Subtract(d.pos, rx), ry);
+    v = Vector3Subtract(Vector3Subtract(pos, rx), ry);
     rlTexCoord2f(0, 1); rlVertex3f(v.x, v.y, v.z);
-    v = Vector3Add(Vector3Subtract(d.pos, rx), ry);
+    v = Vector3Add(Vector3Subtract(pos, rx), ry);
     rlTexCoord2f(0, 0); rlVertex3f(v.x, v.y, v.z);
-    v = Vector3Add(Vector3Add(d.pos, rx), ry);
+    v = Vector3Add(Vector3Add(pos, rx), ry);
     rlTexCoord2f(1, 0); rlVertex3f(v.x, v.y, v.z);
-    v = Vector3Subtract(Vector3Add(d.pos, rx), ry);
+    v = Vector3Subtract(Vector3Add(pos, rx), ry);
     rlTexCoord2f(1, 1); rlVertex3f(v.x, v.y, v.z);
     rlEnd();
     rlSetTexture(0);

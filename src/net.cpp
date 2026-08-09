@@ -102,6 +102,28 @@ float SegmentDist(Vector3 p, Vector3 a, Vector3 b) {
 
 }  // namespace
 
+// A sphere around each popped canister that blooms over the first second and
+// thins away over the last three. A sight line that passes through one is
+// blocked -- which is what "the AI cannot see you through smoke" has to mean
+// mechanically, because a particle cloud is a client-side thing and both ends
+// have to agree.
+bool SmokeBlocks(const std::vector<SimEntity>& ents, Vector3 a, Vector3 b) {
+  for (const SimEntity& e : ents) {
+    if (!e.alive || e.kind != ENT_SMOKE || e.arm >= 0) continue;
+    // `arm` runs from -kSmokeTicks up to 0 while it vents.
+    const int left = -e.arm;                       // ticks of life remaining
+    const int age = kSmokeTicks - left;
+    // Bloom over the first second, hold, then thin over the last three.
+    float t = 1.0f;
+    if (age < 60) t = age / 60.0f;
+    else if (left < 180) t = left / 180.0f;
+    const float r = kSmokeRadius * t;
+    if (r < 24.0f) continue;
+    if (SegmentDist(e.pos, a, b) < r) return true;
+  }
+  return false;
+}
+
 // ----------------------------------------------------------------- sockets
 
 std::string Endpoint::ToString() const {
@@ -442,7 +464,9 @@ void Server::SpawnProjectile(int owner, int weapon, Vector3 origin, Vector3 dir)
   SimEntity e;
   e.id = nextEntId_++;
   e.owner = static_cast<uint8_t>(owner);
-  e.kind = (weapon == WEAPON_ROCKET) ? ENT_ROCKET : ENT_GRENADE;
+  e.kind = (weapon == WEAPON_ROCKET)  ? ENT_ROCKET
+           : (weapon == WEAPON_SMOKE) ? ENT_SMOKE
+                                      : ENT_GRENADE;
   e.pos = origin;
   e.vel = Vector3Scale(Vector3Normalize(dir), d.projSpeed);
   e.vel.y += d.projUpBoost;        // GTJ added 2.5 of lift to thrown grenades
@@ -456,7 +480,7 @@ void Server::PlaceCharge(int owner, int weapon, Vector3 pos, Vector3 normal,
   SimEntity e;
   e.id = nextEntId_++;
   e.owner = static_cast<uint8_t>(owner);
-  e.kind = (weapon == WEAPON_MINE) ? ENT_MINE : ENT_TRIPFLARE;
+  e.kind = ENT_MINE;
   e.pos = pos;
   e.normal = normal;
   e.beamEnd = beamEnd;
@@ -528,7 +552,7 @@ void Server::Detonate(const SimEntity& e) {
   int weapon = WEAPON_ROCKET;
   if (e.kind == ENT_GRENADE) weapon = WEAPON_GRENADE;
   else if (e.kind == ENT_MINE) weapon = WEAPON_MINE;
-  else if (e.kind == ENT_TRIPFLARE) weapon = WEAPON_TRIPFLARE;
+  else if (e.kind == ENT_SMOKE) weapon = WEAPON_SMOKE;
   const WeaponDef& d = Weapon(weapon);
   ApplyBlast(e.pos, d.blastRadius, d.blastDamage, e.owner, weapon, e.kind);
 }
@@ -537,8 +561,14 @@ void Server::SimulateEntities() {
   for (SimEntity& e : ents_) {
     if (!e.alive) continue;
 
-    if (e.kind == ENT_ROCKET || e.kind == ENT_GRENADE) {
-      const WeaponDef& d = Weapon(e.kind == ENT_ROCKET ? WEAPON_ROCKET : WEAPON_GRENADE);
+    // A smoke canister that has already popped just sits there venting; it
+    // is handled with the other placed entities below.
+    const bool flying = e.kind == ENT_ROCKET || e.kind == ENT_GRENADE ||
+                        (e.kind == ENT_SMOKE && e.arm >= 0);
+    if (flying) {
+      const WeaponDef& d = Weapon(e.kind == ENT_ROCKET  ? WEAPON_ROCKET
+                                  : e.kind == ENT_SMOKE ? WEAPON_SMOKE
+                                                        : WEAPON_GRENADE);
       ++e.arm;   // for projectiles `arm` counts ticks alive
       e.vel.y -= d.projGravity;
       const Vector3 next = Vector3Add(e.pos, e.vel);
@@ -578,9 +608,38 @@ void Server::SimulateEntities() {
       // a rocket fired at the sky from living forever.
       if (impact || (d.fuseTicks > 0 && e.fuse <= 0) || e.pos.y < -50.0f ||
           e.arm > 8 * kTickRate) {
-        Detonate(e);
-        e.alive = false;
+        if (e.kind == ENT_SMOKE) {
+          // It pops rather than detonating: no damage, and the canister
+          // stays exactly where it stopped, venting, until the cloud is
+          // gone. `arm` goes negative to mark it as popped and counts the
+          // ticks it has left -- fifteen seconds of screen.
+          if (impact) {
+            e.pos = impactPoint;
+            // Settle it onto the ground rather than leaving it floating two
+            // units off whatever it clipped.
+            if (world_)
+              e.pos.y = world_->GroundHeight(e.pos.x, e.pos.z, 3.0f,
+                                             e.pos.y + 8.0f) + 2.0f;
+          }
+          e.vel = Vector3{0, 0, 0};
+          e.arm = -kSmokeTicks;
+          e.fuse = 0;
+          // One event so every client makes the same pop in the same place.
+          NetEvent pe;
+          pe.type = EV_BLAST;
+          pe.b = ENT_SMOKE;
+          pe.weapon = WEAPON_SMOKE;
+          pe.x = e.pos.x; pe.y = e.pos.y; pe.z = e.pos.z;
+          pe.value = kSmokeRadius;
+          PushEvent(pe);
+        } else {
+          Detonate(e);
+          e.alive = false;
+        }
       }
+    } else if (e.kind == ENT_SMOKE) {
+      // Popped and venting. It dies when the cloud has thinned to nothing.
+      if (++e.arm >= 0) e.alive = false;
     } else {
       if (e.arm > 0) { --e.arm; continue; }
 
@@ -592,19 +651,6 @@ void Server::SimulateEntities() {
           const Vector3 c = Vector3Add(s.state.pos(),
                                        Vector3{0, s.state.height() * 0.5f, 0});
           if (Vector3Distance(c, e.pos) < 46.0f) {
-            Detonate(e);
-            e.alive = false;
-            break;
-          }
-        }
-      } else {  // tripflare beam
-        for (int i = 0; i < kMaxPlayers; ++i) {
-          const ServerSlot& s = slots_[i];
-          if (!s.used || s.state.dead()) continue;
-          if (i == e.owner) continue;   // you can walk through your own beam
-          const Vector3 c = Vector3Add(s.state.pos(),
-                                       Vector3{0, s.state.height() * 0.5f, 0});
-          if (SegmentDist(c, e.pos, e.beamEnd) < kPlayerRadius + 3.0f) {
             Detonate(e);
             e.alive = false;
             break;
@@ -639,9 +685,13 @@ void Server::UpdateBots() {
         // was full of.
         if (slots_[j].bot) continue;
         const float d = Vector3Distance(s.state.pos(), slots_[j].state.pos());
-        if (d < best && world_ &&
-            world_->LineOfSight(Vector3Add(s.state.pos(), Vector3{0, kPlayerEye, 0}),
-                                slots_[j].state.eyePos())) {
+        const Vector3 from = Vector3Add(s.state.pos(), Vector3{0, kPlayerEye, 0});
+        const Vector3 to = slots_[j].state.eyePos();
+        // Smoke breaks the sight line as surely as a wall does. Without this
+        // a screening grenade would be decoration -- the cloud would hide
+        // them from you while they carried on shooting straight through it.
+        if (d < best && world_ && world_->LineOfSight(from, to) &&
+            !SmokeBlocks(ents_, from, to)) {
           best = d;
           s.botTarget = j;
         }
@@ -1048,7 +1098,15 @@ void Server::BroadcastSnapshot() {
     WireEntity we{};
     we.id = e.id; we.kind = e.kind; we.owner = e.owner;
     we.x = e.pos.x; we.y = e.pos.y; we.z = e.pos.z;
-    if (e.kind == ENT_ROCKET || e.kind == ENT_GRENADE) {
+    if (e.kind == ENT_SMOKE) {
+      // A canister carries its own clock instead of a velocity: the client
+      // needs to know how far through venting it is to feed the cloud and to
+      // fade it out, and once it has popped it is not going anywhere. Without
+      // this the client saw arm == 0 for every canister and never vented at
+      // all.
+      we.ex = static_cast<float>(e.arm);
+      we.ey = e.vel.y; we.ez = 0.0f;
+    } else if (e.kind == ENT_ROCKET || e.kind == ENT_GRENADE) {
       we.ex = e.vel.x; we.ey = e.vel.y; we.ez = e.vel.z;
     } else {
       we.ex = e.beamEnd.x; we.ey = e.beamEnd.y; we.ez = e.beamEnd.z;
@@ -1303,7 +1361,10 @@ void Client::HandlePacket(const uint8_t* data, int len, double now) {
         SimEntity e;
         e.id = we.id; e.kind = we.kind; e.owner = we.owner;
         e.pos = Vector3{we.x, we.y, we.z};
-        if (e.kind == ENT_ROCKET || e.kind == ENT_GRENADE) {
+        if (e.kind == ENT_SMOKE) {
+          e.arm = static_cast<int>(we.ex);
+          e.vel = Vector3{0.0f, we.ey, 0.0f};
+        } else if (e.kind == ENT_ROCKET || e.kind == ENT_GRENADE) {
           e.vel = Vector3{we.ex, we.ey, we.ez};
         } else {
           e.beamEnd = Vector3{we.ex, we.ey, we.ez};

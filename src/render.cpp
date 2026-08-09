@@ -469,13 +469,30 @@ void Renderer::DrawEntities(const std::vector<SimEntity>& ents,
                   Color{255, 40, 40, 255});
         break;
       }
-      case ENT_TRIPFLARE: {
-        DrawCubeV(e.pos, Vector3{5, 5, 5}, Color{70, 60, 55, 255});
-        DrawLine3D(e.pos, e.beamEnd, Color{255, 40, 40, 200});
-        // A slightly offset second line reads as a glow at any distance.
-        DrawLine3D(Vector3Add(e.pos, Vector3{0, 0.6f, 0}),
-                   Vector3Add(e.beamEnd, Vector3{0, 0.6f, 0}),
-                   Color{255, 150, 120, 110});
+      case ENT_SMOKE: {
+        // The canister itself: a grey cylinder-ish body with a spoon and a
+        // ring on top, sitting where it landed. It stays for as long as it is
+        // venting, so you can see where the cloud is coming from and how much
+        // of it is left. In the air it is the same object, tumbling.
+        const bool popped = e.arm < 0;
+        const Color body = popped ? Color{104, 106, 100, 255}
+                                  : Color{86, 92, 74, 255};
+        rlPushMatrix();
+        rlTranslatef(e.pos.x, e.pos.y, e.pos.z);
+        if (!popped) {
+          // Tumbling in flight, spun off its own velocity.
+          rlRotatef(e.pos.y * 9.0f, 0.3f, 1.0f, 0.2f);
+        }
+        DrawCubeV(Vector3{0, 2.6f, 0}, Vector3{3.4f, 5.2f, 3.4f}, body);
+        // The white band round the middle that says what it is.
+        DrawCubeV(Vector3{0, 2.6f, 0}, Vector3{3.6f, 1.3f, 3.6f},
+                  Color{214, 214, 208, 255});
+        // Fuse assembly and spoon.
+        DrawCubeV(Vector3{0, 5.6f, 0}, Vector3{1.6f, 1.4f, 1.6f},
+                  Color{54, 56, 58, 255});
+        DrawCubeV(Vector3{1.3f, 5.4f, 0}, Vector3{1.0f, 2.6f, 0.7f},
+                  Color{70, 72, 74, 255});
+        rlPopMatrix();
         break;
       }
       default:

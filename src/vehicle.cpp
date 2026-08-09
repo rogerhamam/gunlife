@@ -594,10 +594,26 @@ void VehicleSystem::DriveHostile(World& world, size_t index) {
     v.pos = next;
 
     // Minigun: bursts of a dozen, only with a clear line down to the target.
+    // Every third pause it puts a rocket in instead, so the thing overhead is
+    // something you have to get out from under rather than a noise.
     const Vector3 muzzle{v.pos.x, v.pos.y - 6.0f, v.pos.z};
     if (v.fireCooldown == 0 && flat < 1400.0f &&
         world.LineOfSight(muzzle, threat_)) {
-      if (v.burst <= 0) { v.burst = 12; v.fireCooldown = 0; }
+      if (v.burst <= 0) {
+        ++v.salvo;
+        if (v.salvo % 3 == 0) {
+          // A rocket, then a long reload before the guns come back.
+          v.fireCooldown = 260;
+          v.firedWeapon = 2;
+          v.fireFrom = muzzle;
+          // Deliberately imperfect, like the tank's -- it lands near you.
+          v.fireAt = Vector3Add(threat_, Vector3{RandBetween(-40.0f, 40.0f),
+                                                 0.0f,
+                                                 RandBetween(-40.0f, 40.0f)});
+          return;
+        }
+        v.burst = 12;
+      }
       --v.burst;
       v.fireCooldown = v.burst > 0 ? 4 : 150;   // burst, then a long pause
       v.firedWeapon = 1;

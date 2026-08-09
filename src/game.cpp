@@ -296,6 +296,34 @@ void Game::ResolveHostileFire() {
       TrackBullet(from, dir, h.hit ? h.dist : len, h.hit, at,
                   h.hit ? h.normal : Vector3{0, 1, 0}, h.brushIndex,
                   WEAPON_ROCKET, false);
+    } else if (weapon == 2) {
+      // Gunship rocket pods. Same warhead the player's launcher throws, fired
+      // from clear of the airframe so it does not go off on the pylon.
+      int self = -1;
+      for (size_t k = 0; k < vehicles_.list().size(); ++k)
+        if (&vehicles_.list()[k] == &v) { self = static_cast<int>(k); break; }
+      const Vector3 launch = vehicles_.ClearOfHull(self, v.fireFrom, dir);
+      const RayHit h = world_.Raycast(launch, dir, 3000.0f);
+      const Vector3 at =
+          h.hit ? h.point : Vector3Add(launch, Vector3Scale(dir, len));
+      // Visible all the way in: the exhaust streak, then the blast.
+      fx_.ShellTracer(launch, at, dir);
+      fx_.MuzzleFlash(launch, dir, 3.0f, 2.4f);
+      fx_.SpawnExplosion(at, 130.0f, true);
+      AddFlashLight(at, Vector3{1.0f, 0.72f, 0.32f}, 420.0f, 0.28f);
+      AddFlashLight(launch, Vector3{1.3f, 0.95f, 0.45f}, 260.0f, 0.07f);
+      assets_.PlayAt("rocket_fire", launch, lp_.eyePos(), lp_.yaw, 3400.0f,
+                     0.95f);
+      assets_.PlayAt("explosion", at, lp_.eyePos(), lp_.yaw, 3200.0f, 1.0f);
+      ApplyLocalBlast(at, 130.0f, 80.0f);
+      const float dist = Vector3Distance(at, lp_.eyePos());
+      if (dist < 200.0f && !devGodMode_ && !lp_.dead) {
+        const float dmg = 70.0f * (1.0f - dist / 200.0f);
+        if (drivingVehicle_ >= 0) AbsorbVehicleDamage(dmg, WEAPON_ROCKET);
+        else lp_.Damage(dmg);
+        damageFlash_ = fminf(1.0f, damageFlash_ + 0.5f);
+        shake_ = fmaxf(shake_, 1.2f);
+      }
     } else {
       // Gunship minigun: a hitscan round with a tracer, and a bite of damage
       // if it lands on you.
@@ -322,10 +350,20 @@ void Game::ResolveHostileFire() {
         else lp_.Damage(11.0f);
         damageFlash_ = fminf(1.0f, damageFlash_ + 0.35f);
       }
+      // You have to be able to *see* it shooting at you. The round only had
+      // audio and a light before -- no tracer, no muzzle flash -- so a
+      // gunship working you over from four hundred units up was invisible
+      // except for the damage.
+      fx_.AddTracer(v.fireFrom, Vector3Add(v.fireFrom, Vector3Scale(j, stop)),
+                    Color{255, 232, 165, 255}, 0.9f, 9000.0f);
+      fx_.MuzzleFlash(v.fireFrom, j, 1.5f, 0.5f);
       TrackBullet(v.fireFrom, j, stop, h.hit && stop >= (h.hit ? h.dist : 0.0f),
                   h.point, h.hit ? h.normal : Vector3{0, 1, 0}, h.brushIndex,
                   WEAPON_RIFLE, false);
-      assets_.PlayAt("rifle", v.fireFrom, eye, lp_.yaw, 2600.0f, 0.5f);
+      // Audible from a long way off -- it is a minigun on a helicopter, not a
+      // pistol. The old 2600-unit range at half volume put it below the wind
+      // by the time it was high enough to be a threat.
+      assets_.PlayAt("rifle", v.fireFrom, eye, lp_.yaw, 5200.0f, 0.85f);
       AddFlashLight(v.fireFrom, Vector3{1.0f, 0.86f, 0.5f}, 120.0f, 0.04f);
     }
   }
@@ -562,6 +600,7 @@ void Game::Frame() {
   fx_.Update(dt, static_cast<float>(now_), world_, sky_.wind());
   UpdateBullets(dt);
   UpdateProjectileFlyBys();
+  UpdateSmoke(dt);
   UpdateReloadAudio();
 
   // Spent cases landing. Capped per frame so a minigun burst does not fire
@@ -959,6 +998,48 @@ void Game::SplatterBlood(Vector3 wound, Vector3 shotDir, float amount) {
 // only ever reports where it is now, so the closest approach is found by
 // watching the distance turn around -- the frame it stops falling is the
 // frame the thing is level with you.
+// A popped canister venting. The cloud is not one big puff dropped at pop
+// time: it is fed continuously for the full fifteen seconds, in plumes thrown
+// out in every direction, so it billows outward and keeps moving instead of
+// hanging there as a static ball and then blinking out.
+void Game::UpdateSmoke(float dt) {
+  smokeEmit_ += dt;
+  // Emit on a fixed cadence rather than per frame, so the cloud is the same
+  // density at 30 fps as at 500.
+  constexpr float kStep = 1.0f / 30.0f;
+  if (smokeEmit_ < kStep) return;
+  const int steps = fminf(4.0f, smokeEmit_ / kStep);
+  smokeEmit_ = 0.0f;
+
+  for (const SimEntity& e : client_.entities()) {
+    if (e.kind != ENT_SMOKE || e.arm >= 0) continue;
+    const int left = -e.arm;
+    const int age = kSmokeTicks - left;
+    // Hard at first as the canister blows off, then a steady feed, tailing
+    // away as it burns out.
+    float rate = 1.0f;
+    if (age < 45) rate = 2.6f;
+    else if (left < 240) rate = left / 240.0f;
+    if (rate < 0.05f) continue;
+
+    const Vector3 base = Vector3Add(e.pos, Vector3{0, 3.0f, 0});
+    for (int s = 0; s < steps; ++s) {
+      const int n = 1 + static_cast<int>(rate * 2.0f);
+      for (int i = 0; i < n; ++i) {
+        // Out in every direction, flattened a little so it spreads along the
+        // ground and fills a doorway rather than climbing straight up.
+        Vector3 dir{RandRange(-1.0f, 1.0f), RandRange(-0.25f, 0.75f),
+                    RandRange(-1.0f, 1.0f)};
+        if (Vector3LengthSqr(dir) < 0.01f) dir = Vector3{0, 1, 0};
+        dir = Vector3Normalize(dir);
+        const float speed = RandRange(14.0f, 46.0f) * rate;
+        fx_.EmitBurst(base, dir, 1, RandRange(4.0f, 7.5f), 16.0f, 74.0f, 0.5f,
+                      0.0f, 5.0f, 0.32f, Vector3Scale(dir, speed), 7.0f);
+      }
+    }
+  }
+}
+
 void Game::UpdateProjectileFlyBys() {
   const Vector3 ear = lp_.eyePos();
   const std::vector<SimEntity>& ents = client_.entities();
@@ -1012,7 +1093,7 @@ void Game::UpdateProjectileFlyBys() {
 }
 
 void Game::SurfaceImpact(Vector3 point, Vector3 normal, int brushIndex,
-                         bool loud) {
+                         bool loud, Vector3 inDir) {
   fx_.ImpactPuff(point, normal, 3.2f, DustFor(world_, brushIndex));
   // No holes on a vehicle. Its collider is an axis-aligned box that does not
   // follow the bodywork, so a decal stuck to it would float beside the car --
@@ -1025,7 +1106,7 @@ void Game::SurfaceImpact(Vector3 point, Vector3 normal, int brushIndex,
     // face rather than hanging out over a corner.
     const Vector3 mn = valid ? world_.brushes()[brushIndex].min : Vector3{};
     const Vector3 mx = valid ? world_.brushes()[brushIndex].max : Vector3{};
-    fx_.AddBulletHole(point, normal, mn, mx);
+    fx_.AddBulletHole(point, normal, mn, mx, inDir);
   }
   if (!loud) return;
   // Every strike on the world gets its impact layer; metal and glancing hits
@@ -1138,7 +1219,8 @@ void Game::UpdateBullets(float dt) {
 
     // Impact: the round has arrived.
     if (b.travelled >= b.hitDist) {
-      if (b.hitWorld) SurfaceImpact(b.hitPoint, b.hitNormal, b.brushIndex, true);
+      if (b.hitWorld)
+        SurfaceImpact(b.hitPoint, b.hitNormal, b.brushIndex, true, b.dir);
       b.travelled = -1.0f;   // marked for removal
     }
   }
@@ -1335,6 +1417,28 @@ void Game::TickVehicles(const InputCommand& in) {
     driveThrottlePrev_ = false;
   }
 
+  // A hostile gunship is heard before it is seen. The rotor loop used to run
+  // only for the machine you were sitting in, so one hunting you overhead was
+  // completely silent until it opened fire.
+  if (!InHeli()) {
+    float rotor = 0.0f;
+    for (const Vehicle& hv : vehicles_.list()) {
+      if (hv.kind != VEH_HELI || !hv.hostile || hv.life <= 0.0f) continue;
+      const float dist = Vector3Distance(hv.pos, lp_.eyePos());
+      // Carries a long way: it is a helicopter.
+      rotor = fmaxf(rotor, Clampf(1.0f - dist / 2800.0f, 0.0f, 1.0f));
+    }
+    if (rotor > 0.02f) {
+      if (!heliAmbient_) { assets_.PlayLoop("heli", 0.0f); heliAmbient_ = true; }
+      assets_.SetLoopVolume("heli", rotor * rotor * 0.7f);
+    } else if (heliAmbient_) {
+      assets_.StopLoop("heli");
+      heliAmbient_ = false;
+    }
+  } else if (heliAmbient_) {
+    heliAmbient_ = false;      // we are in one; the driving loop has it now
+  }
+
   const float dirBefore =
       drivingVehicle_ >= 0 ? vehicles_.list()[drivingVehicle_].dirDeg : 0.0f;
   vehicles_.Tick(world_, drivingVehicle_, di);
@@ -1431,7 +1535,7 @@ void Game::ApplyLocalBlast(Vector3 at, float radius, float damage) {
 // else -- pistols, rifles, shotguns, the sniper -- rings off the hull.
 bool Game::HurtsTank(int weapon) {
   return weapon == WEAPON_ROCKET || weapon == WEAPON_GRENADE ||
-         weapon == WEAPON_MINE || weapon == WEAPON_TRIPFLARE;
+         weapon == WEAPON_MINE;
 }
 
 // Damage arriving while you are in a vehicle goes into the vehicle first --
@@ -1549,10 +1653,12 @@ void Game::TryFireHeli(bool pressed, bool held) {
     client_.SendHit(static_cast<uint8_t>(hitP), head ? 44.0f : 24.0f,
                     WEAPON_RIFLE, head);
     fx_.BloodSpray(end, sdir, head ? 7.0f : 5.0f);
+    SplatterBlood(end, sdir, head ? 6.0f : 4.0f);
     hitMarker_ = 0.22f;
     hitWasHead_ = head;
   } else if (wh.hit) {
-    SurfaceImpact(wh.point, wh.normal, wh.brushIndex, GetRandomValue(0, 2) == 0);
+    SurfaceImpact(wh.point, wh.normal, wh.brushIndex, GetRandomValue(0, 2) == 0,
+                  sdir);
   }
 }
 
@@ -1645,7 +1751,8 @@ void Game::TryFireTank(bool pressed, bool held) {
     assets_.Play(head ? "headshot" : "hitmark", head ? 0.5f : 0.28f, 0.5f,
                  head ? 1.0f : 1.4f);
   } else if (wh.hit) {
-    SurfaceImpact(wh.point, wh.normal, wh.brushIndex, GetRandomValue(0, 2) == 0);
+    SurfaceImpact(wh.point, wh.normal, wh.brushIndex, GetRandomValue(0, 2) == 0,
+                  dir);
   }
 }
 
@@ -1769,7 +1876,7 @@ void Game::DoMelee() {
     hitWasHead_ = back || head;
     assets_.Play("punch", 0.7f);
   } else if (wh.hit) {
-    SurfaceImpact(wh.point, wh.normal, wh.brushIndex, false);
+    SurfaceImpact(wh.point, wh.normal, wh.brushIndex, false, dir);
   }
 }
 
@@ -1790,25 +1897,8 @@ void Game::DoPlace() {
     return;
   }
 
-  const WeaponDef& d = Weapon(WEAPON_TRIPFLARE);
-  const RayHit wh = world_.Raycast(eye, dir, 220.0f);
-  if (!wh.hit) {
-    SetMessage("No surface in range", 1.4f);
-    return;
-  }
-  const Vector3 at = Vector3Add(wh.point, Vector3Scale(wh.normal, 3.0f));
-  Vector3 beamDir;
-  if (fabsf(wh.normal.y) > 0.7f) {
-    beamDir = FlatRight(lp_.yaw);
-  } else {
-    beamDir = Vector3Normalize(Vector3CrossProduct(wh.normal, Vector3{0, 1, 0}));
-  }
-  const RayHit beamHit = world_.Raycast(at, beamDir, d.range);
-  const Vector3 end = beamHit.hit
-                          ? beamHit.point
-                          : Vector3Add(at, Vector3Scale(beamDir, d.range));
-  client_.SendFire(static_cast<uint8_t>(w), at, wh.normal, end);
-  SetMessage("Tripflare set", 1.4f);
+  // Nothing else is placed. The tripflare was the only other one, and the
+  // smoke grenade that replaced it is thrown, not stuck to a wall.
 }
 
 void Game::TryFire(bool pressed, bool held) {
@@ -1945,6 +2035,21 @@ void Game::ProcessEvents() {
       }
       case EV_BLAST: {
         const Vector3 p{e.x, e.y, e.z};
+        // A smoke grenade popping is not an explosion. Small burst, no
+        // fireball, no shockwave, no damage -- then the canister vents for
+        // fifteen seconds, which is handled per frame in UpdateSmoke.
+        if (e.b == ENT_SMOKE) {
+          fx_.EmitBurst(p, Vector3{0, 1, 0}, 24, 0.5f, 4.0f, 22.0f, 0.75f, 0.0f,
+                        20.0f, 0.25f, Vector3{0, 0, 0}, 5.0f);
+          fx_.EmitBulbousCloud(p, 0.8f, 10, 2.6f);
+          // The grenade's own report, not the mine's placement clunk: it is a
+          // grenade, so it goes off like one -- just smaller and duller,
+          // because there is nothing in it but the burning compound.
+          assets_.PlayAt("explosion", p, lp_.eyePos(), lp_.yaw, 2000.0f, 0.55f,
+                         RandRange(0.72f, 0.84f));
+          assets_.PlayAt("fire", p, lp_.eyePos(), lp_.yaw, 1400.0f, 0.5f);
+          break;
+        }
         const float ground = world_.GroundHeight(p.x, p.z, 6.0f, p.y + 40.0f);
         fx_.SpawnExplosion(p, e.value, (p.y - ground) < e.value * 0.45f);
         AddFlashLight(p, Vector3{1.61f, 1.01f, 0.40f}, e.value * 4.5f, 0.45f);
@@ -2031,7 +2136,7 @@ void Game::ProcessEvents() {
 
           const bool explosive =
               e.weapon == WEAPON_ROCKET || e.weapon == WEAPON_GRENADE ||
-              e.weapon == WEAPON_MINE || e.weapon == WEAPON_TRIPFLARE;
+              e.weapon == WEAPON_MINE;
 
           // A death paints the place it happened. Far more of it than a hit,
           // and thrown in every direction as well as down the shot line,
@@ -2156,7 +2261,12 @@ void Game::DrawGame() {
   // The car you are driving is swapped for GTJ3D's own interior: obj_car's
   // `interior_model`, the taller cabin wearing frame 1 of its skin, with its
   // own steering wheel on its own quad in front of you.
-  const bool inCar = drivingVehicle_ >= 0 && !lp_.dead && enterTimer_ == 0 &&
+  // Deliberately not gated on `enterTimer_`: the camera is at the driver's
+  // seat from the frame you press E, so the view has to cut to the inside of
+  // the car on that frame too. Waiting out the door-and-start second left you
+  // sitting in the seat looking at the *outside* of the bodywork for a full
+  // second before it swapped.
+  const bool inCar = drivingVehicle_ >= 0 && !lp_.dead &&
                      VehicleSystem::HasGtjShell(
                          vehicles_.list()[drivingVehicle_].kind) &&
                      assets_.haveCarSkins();

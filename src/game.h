@@ -155,7 +155,15 @@ class Game {
   // near-miss is measured off that instead -- it fires on the frame the thing
   // is at its closest and starting to recede.
   void UpdateProjectileFlyBys();
-  void SurfaceImpact(Vector3 point, Vector3 normal, int brushIndex, bool loud);
+  // Feeds the cloud from every popped smoke canister, every frame it is
+  // venting. Emitting one big puff at pop time gives a static ball that
+  // blinks out; a continuous feed billows and drifts.
+  void UpdateSmoke(float dt);
+  // `inDir` is the direction the round was travelling, so the mark it leaves
+  // can follow the round in rather than always being a circle stamped square
+  // on the wall.
+  void SurfaceImpact(Vector3 point, Vector3 normal, int brushIndex, bool loud,
+                     Vector3 inDir = Vector3{0, 0, 0});
   // Throws blood off a wound and lets it land on whatever is behind it. Each
   // spot is a separate cast in its own direction, so the splatter follows the
   // walls, floors and ceilings it actually reaches instead of being a decal
@@ -207,6 +215,9 @@ class Game {
   int nearVehicle_ = -1;      // what the "press E" prompt is pointing at
   int driveTurning_ = 0;      // GTJ's `turning`: 0 straight, 1 left, 2 right
   bool engineAudio_ = false;
+  // A hostile gunship's rotor, heard from the ground. Separate from
+  // engineAudio_, which is the machine you are sitting in.
+  bool heliAmbient_ = false;
   bool driveThrottlePrev_ = false;
 
   // Tank armament. 1200 rounds per minute is one round every three ticks at
@@ -283,6 +294,7 @@ class Game {
     bool played = false;
   };
   std::vector<FlyByTrack> flyBys_;
+  float smokeEmit_ = 0.0f;   // accumulator for the smoke emission cadence
   // Reload audio bookkeeping: which weapon is reloading and how far through it
   // we were last frame, so each stage plays exactly once.
   int reloadAudioWeapon_ = -1;

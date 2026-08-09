@@ -116,13 +116,18 @@ const WeaponDef kWeapons[WEAPON_COUNT] = {
     "place", 1.0f, "vm_knife", 30, 2.0f, 0.0f, 0.0f,
     320.0f, 360.0f, 0.0f, 0.0f},
 
-  // TRIPFLARE -- laser tripwire stuck to the surface you are looking at.
-  {"Tripflare", "Tripflares", FIRE_PLACE,
-    0.0f, 60, 340.0f, 1, 0.0f, 0.0f, 0.0f,
+  // SMOKE GRENADE -- thrown like a frag, but it pops rather than detonates:
+  // a small burst, then fifteen seconds of screening smoke. It does no damage
+  // at all, so the blast radius is zero and the "explosion" is cosmetic; what
+  // it is for is breaking line of sight, and the AI genuinely cannot see
+  // through it. Thrown a little harder and flatter than a frag, because you
+  // want it landing where you are going rather than at your feet.
+  {"Smoke Grenade", "Smoke", FIRE_PROJECTILE,
+    0.0f, 70, 0.0f, 1, 0.0f, 0.0f, 0.0f,
     0, 3, 0, false,
     false, 70.0f, 0.0f,
-    0.0f, 0.0f, 0.0f, 0, 105.0f, 90.0f,
-    "beep", 1.0f, "vm_knife", 30, 2.0f, 0.0f, 0.0f,
+    7.0f, 0.2f, 1.8f, 260, 0.0f, 0.0f,
+    "swing", 1.15f, "vm_grenade", 30, 2.0f, 0.0f, 0.0f,
     320.0f, 360.0f, 0.0f, 0.0f},
 };
 // clang-format on

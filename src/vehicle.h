@@ -105,6 +105,7 @@ struct Vehicle {
   bool hostile = false;
   int fireCooldown = 0;
   int burst = 0;               // rounds left in the current minigun burst
+  int salvo = 0;               // bursts fired, so every third can be a rocket
   // Set for one tick when the vehicle wants to shoot. VehicleSystem does not
   // own effects or health, so Game reads these and turns them into a tracer,
   // a blast and damage.

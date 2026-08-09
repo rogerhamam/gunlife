@@ -2,7 +2,7 @@
 //
 // Model: movement is client-authoritative (each client reports where it is),
 // hit registration is shooter-authoritative with server-side sanity checks, and
-// everything explosive -- rockets, grenades, mines, tripflares -- is simulated
+// everything explosive -- rockets, grenades, mines, smoke -- is simulated
 // on the server and mirrored to clients. That keeps shooting as responsive as
 // CS while leaving the server in charge of health, deaths and scores.
 #pragma once
@@ -82,8 +82,9 @@ struct WireEntity {
   uint16_t id;
   uint8_t kind, owner;
   float x, y, z;
-  // Dual purpose: the beam terminus for a tripflare, the current velocity for
-  // a rocket or grenade (clients need it to orient the model).
+  // Multi-purpose: the current velocity for a rocket or grenade (clients need
+  // it to orient the model), and for a smoke canister the ticks it has left to
+  // vent, which is what tells the client how hard to feed the cloud.
   float ex, ey, ez;
 };
 #pragma pack(pop)

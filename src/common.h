@@ -76,7 +76,7 @@ enum WeaponId : uint8_t {
   WEAPON_ROCKET,
   WEAPON_GRENADE,
   WEAPON_MINE,
-  WEAPON_TRIPFLARE,
+  WEAPON_SMOKE,        // smoke grenade; replaced the tripflare
   WEAPON_COUNT
 };
 

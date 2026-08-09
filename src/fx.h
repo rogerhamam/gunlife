@@ -114,6 +114,14 @@ struct Decal {
   bool hole = false;       // bullet hole art rather than a soft scorch
 };
 
+// `pos` is the point on the surface itself, not a point floating in front of
+// it. The standoff that keeps a decal out of its wall's depth-test tolerance
+// is applied at draw time and scaled by how far away the camera is, which is
+// what lets a hole sit flush against the brickwork when you walk up to it and
+// still beat depth precision from across the map. Baking a fixed offset in
+// meant a hole visibly hovered a couple of units proud of the wall.
+float DecalStandoff(float cameraDistance);
+
 // A body part thrown by a death. Parts are rigid boxes with their own spin,
 // gravity, drag and ground bounce -- enough to read as a ragdoll coming apart
 // without a full constraint solver.
@@ -176,7 +184,11 @@ class FxSystem {
   void AddDecal(Vector3 p, Vector3 n, float size, Color c, float life);
   // `faceMin`/`faceMax` are the bounds of the surface struck; the mark is
   // trimmed to them so it never overhangs an edge.
-  void AddBulletHole(Vector3 p, Vector3 n, Vector3 faceMin, Vector3 faceMax);
+  // `inDir` is the direction the round was travelling. A round that arrives
+  // square leaves a round hole; one that grazes leaves a longer scrape along
+  // its own line of travel, because that is what a bullet does to a wall.
+  void AddBulletHole(Vector3 p, Vector3 n, Vector3 faceMin, Vector3 faceMax,
+                     Vector3 inDir = Vector3{0, 0, 0});
 
   // --- corpses ------------------------------------------------------------
   // Blows a body apart from `hitPos` along `shotDir`. `gib` turns a shot death
