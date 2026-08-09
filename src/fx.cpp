@@ -9,6 +9,9 @@
 namespace kaj {
 namespace {
 
+// Bullet holes, scorch and blood all share this budget, oldest first.
+constexpr size_t kMaxDecals = 1400;
+
 inline float Fr01() { return RandRange(0.0f, 1.0f); }
 
 Vector3 RandUnitSphere() {
@@ -870,8 +873,13 @@ void FxSystem::ShellTracer(Vector3 a, Vector3 b, Vector3 dir) {
   (void)dir;
 }
 
+// The cap was 420, which was ample when the only marks were bullet holes and
+// scorch. Blood changed that: one death throws up to thirty spots, so a
+// firefight in a doorway used to start eating its own splatter within
+// seconds. A decal is one camera-facing quad, so the budget is cheap to
+// raise.
 void FxSystem::AddDecal(Vector3 p, Vector3 n, float size, Color c, float life) {
-  if (decals_.size() > 420) decals_.erase(decals_.begin());
+  if (decals_.size() > kMaxDecals) decals_.erase(decals_.begin());
   Decal d;
   d.pos = Vector3Add(p, Vector3Scale(n, 0.4f));
   d.normal = n;
@@ -889,7 +897,7 @@ void FxSystem::AddDecal(Vector3 p, Vector3 n, float size, Color c, float life) {
 // firefight leaves the wall visibly chewed up.
 void FxSystem::AddBulletHole(Vector3 p, Vector3 n, Vector3 faceMin,
                              Vector3 faceMax) {
-  if (decals_.size() > 420) decals_.erase(decals_.begin());
+  if (decals_.size() > kMaxDecals) decals_.erase(decals_.begin());
   Decal d;
   // Stand the mark well clear of the face it belongs to. At 0.35 units the
   // quad was inside the depth-test tolerance of the wall and only the corners

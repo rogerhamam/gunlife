@@ -17,22 +17,22 @@ float RandBetween(float a, float b) { return a + (b - a) * Fr01(); }
 // GTJ3D's obj_car measurements, verbatim, plus a tank cut to the same pattern.
 const VehicleDef kDefs[] = {
     // saloon: length 58, width 32, model_height 7, front_length 25, height 20
-    // seatHeight puts the eye at the driver's window line of the *drawn* body
-    // -- inside the cabin looking out through the glass, not floating above
-    // the roof. GTJ3D's own figure was `z + height + 2` (an eye 16 above the
-    // ground) but that is measured against obj_car's block shell, which is
-    // seven units tall; the glTF bodies we actually draw are far taller, and
-    // 16 puts you inside the bonnet. For the tank it is turret height, where a
-    // commander's head actually is.
+    // seatHeight is GTJ3D's driving eye height minus our own eye offset.
+    // obj_player put the camera at `z + height + 2` in a car and
+    // `z + height + 15` in the SWAT van, with height = 14, and
+    // LocalPlayer::eyePos adds kPlayerEye (15) on top of what SeatPos
+    // returns -- so 14+2-15 = 1 and 14+15-15 = 14 reproduce those exactly.
+    // The eye sits inside obj_car's own shell, which is what you are in while
+    // driving. For the tank it is turret height, where a commander's head is.
     {"Saloon", 58.0f, 32.0f, 7.0f, 25.0f, 20.0f,
      0.05f, 3.0f, 0.1f, 4.0f,
      0.005f, 0.02f, 10.0f, 14.0f,
-     100.0f, 15.0f, 32.0f},
+     100.0f, 1.0f, 32.0f},
     // SWAT van: length 58, width 32, model_height 18, front_length 5, height 30
     {"SWAT Van", 58.0f, 32.0f, 18.0f, 5.0f, 30.0f,
      0.05f, 2.4f, 0.09f, 3.5f,
      0.004f, 0.014f, 8.0f, 11.0f,
-     160.0f, 25.0f, 34.0f},
+     160.0f, 14.0f, 34.0f},
     // Tank: heavier, slower, turns on the spot far worse, takes a beating.
     {"Tank", 96.0f, 52.0f, 22.0f, 12.0f, 46.0f,
      0.04f, 1.5f, 0.07f, 2.5f,
@@ -43,7 +43,7 @@ const VehicleDef kDefs[] = {
     {"Supercar", 54.0f, 30.0f, 5.0f, 26.0f, 17.0f,
      0.06f, 3.6f, 0.14f, 4.0f,
      0.022f, 0.034f, 17.0f, 20.0f,
-     70.0f, 13.0f, 30.0f},
+     70.0f, 0.0f, 30.0f},
     // Gunship. GTJ3D's helicopter had life 50 and a hover ceiling of 120; it
      // is tougher here because you fly it yourself and the ground shoots back.
     {"Gunship", 130.0f, 56.0f, 30.0f, 20.0f, 54.0f,
@@ -613,6 +613,10 @@ void VehicleSystem::DriveHostile(World& world, size_t index) {
   // units and `occupants = irandom_range(4, 6)`; this one carries eight and
   // stops a little further out so the squad has room to fan out rather than
   // spawning on top of you.
+  //
+  // It is a personnel carrier and nothing else: it never sets `firedWeapon`,
+  // so it has no gun of any kind. Everything it brings to the fight walks out
+  // of the back and shoots on its own two feet.
   if (v.kind == VEH_VAN) {
     constexpr float kDropRange = 340.0f;
     float diffV = fmodf(wantYaw - v.dirDeg + 540.0f, 360.0f) - 180.0f;
@@ -883,7 +887,8 @@ bool VehicleSystem::HasGtjShell(int kind) {
 }
 
 bool VehicleSystem::DrawGtjShell(const Assets& assets, int index,
-                                 Vector3 camPos, bool interior) const {
+                                 Vector3 camPos, bool interior,
+                                 int turning) const {
   if (index < 0 || index >= count()) return false;
   const Vehicle& v = vehicles_[index];
   if (!HasGtjShell(v.kind) || !assets.haveCarSkins()) return false;
@@ -1004,6 +1009,58 @@ bool VehicleSystem::DrawGtjShell(const Assets& assets, int index,
   }
   rlEnd();
   rlSetTexture(0);
+
+  // ---- the steering wheel ------------------------------------------------
+  // obj_car's draw event:
+  //   rotation_y(-40), translation(1, 0, 0), rotation_z(direction),
+  //   translation(x, y, z + model_height)
+  //   d3d_draw_wall(0, -5, mh + 5 + wheel_d,  0, 5, mh + wheel_d, spr, 1, 1)
+  // -- a 10 x 5 quad standing across the car, tilted back 40 degrees on its
+  // column, one unit ahead of obj_car's origin and lifted by model_height on
+  // top of the model's own height. Drawn in the world rather than as a HUD
+  // overlay because that is where GTJ3D put it: look out of the side window
+  // and the wheel stays with the car instead of following your eyes.
+  //
+  // Full white, and drawn after the glass rather than behind it: the wheel
+  // and the hands on it are the one part of the driving view that is UI, and
+  // running either through the cabin's tint changes the colour of the arms
+  // with the car.
+  const SpriteSheet& sw = assets.steeringWheel();
+  if (interior && sw.valid()) {
+    const float halfW = 5.0f;
+    const float z0 = mh + s.steerDrop;            // bottom of the quad
+    const float z1 = mh + 5.0f + s.steerDrop;     // top
+    const float ca = cosf(DegToRadF(-40.0f)), sa = sinf(DegToRadF(-40.0f));
+    // rotation_y: x' = x cos - z sin, z' = x sin + z cos, then +1 in x. The
+    // model x is 0, so only the tilt of the column matters.
+    auto WheelPt = [&](float y, float z) {
+      const float mx = -z * sa + 1.0f;
+      const float mz = z * ca;
+      // These coordinates are relative to obj_car's origin, which is the
+      // middle of the cabin box -- model x = length/2 -- not to the middle of
+      // the whole footprint. ...and the base translation is z + model_height,
+      // not the body's z + 2.
+      return GtjToWorld(s, v, mx + L * 0.5f, y + W * 0.5f, mz, mh);
+    };
+    const Vector3 a = WheelPt(-halfW, z1), b = WheelPt(halfW, z1);
+    const Vector3 c = WheelPt(halfW, z0), dd = WheelPt(-halfW, z0);
+    const Texture2D& wt = sw.frame(turning);
+    rlSetTexture(wt.id);
+    rlBegin(RL_QUADS);
+    rlColor4ub(255, 255, 255, 255);
+    Vector3 n = Vector3CrossProduct(Vector3Subtract(b, a),
+                                    Vector3Subtract(dd, a));
+    n = Vector3Normalize(n);
+    if (Vector3DotProduct(n, Vector3Subtract(camPos, a)) < 0.0f)
+      n = Vector3Negate(n);
+    rlNormal3f(n.x, n.y, n.z);
+    rlTexCoord2f(0, 0); rlVertex3f(a.x, a.y, a.z);
+    rlTexCoord2f(0, 1); rlVertex3f(dd.x, dd.y, dd.z);
+    rlTexCoord2f(1, 1); rlVertex3f(c.x, c.y, c.z);
+    rlTexCoord2f(1, 0); rlVertex3f(b.x, b.y, b.z);
+    rlEnd();
+    rlSetTexture(0);
+  }
 
   rlDrawRenderBatchActive();
   rlEnableDepthMask();

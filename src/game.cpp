@@ -276,10 +276,16 @@ void Game::ResolveHostileFire() {
     dir = Vector3Scale(dir, 1.0f / len);
 
     if (weapon == 0) {
-      // Tank main gun: a shell that goes off where it lands.
-      const RayHit h = world_.Raycast(v.fireFrom, dir, kTankCannonRange);
+      // Tank main gun: a shell that goes off where it lands. Traced from
+      // clear of the firer's own hull for the same reason the player's is --
+      // otherwise it shells itself on the shot.
+      int self = -1;
+      for (size_t k = 0; k < vehicles_.list().size(); ++k)
+        if (&vehicles_.list()[k] == &v) { self = static_cast<int>(k); break; }
+      const Vector3 from = vehicles_.ClearOfHull(self, v.fireFrom, dir);
+      const RayHit h = world_.Raycast(from, dir, kTankCannonRange);
       const Vector3 at = h.hit ? h.point
-                               : Vector3Add(v.fireFrom, Vector3Scale(dir, len));
+                               : Vector3Add(from, Vector3Scale(dir, len));
       fx_.SpawnExplosion(at, 150.0f, true);
       AddFlashLight(at, Vector3{1.0f, 0.72f, 0.32f}, 460.0f, 0.30f);
       assets_.PlayAt("explosion", at, lp_.eyePos(), lp_.yaw, 3200.0f, 1.0f);
@@ -287,7 +293,7 @@ void Game::ResolveHostileFire() {
                      0.9f);
       AddFlashLight(v.fireFrom, Vector3{1.0f, 0.85f, 0.5f}, 300.0f, 0.07f);
       ApplyLocalBlast(at, 150.0f, 90.0f);
-      TrackBullet(v.fireFrom, dir, h.hit ? h.dist : len, h.hit, at,
+      TrackBullet(from, dir, h.hit ? h.dist : len, h.hit, at,
                   h.hit ? h.normal : Vector3{0, 1, 0}, h.brushIndex,
                   WEAPON_ROCKET, false);
     } else {
@@ -555,6 +561,7 @@ void Game::Frame() {
   debugPhase_ = 6;
   fx_.Update(dt, static_cast<float>(now_), world_, sky_.wind());
   UpdateBullets(dt);
+  UpdateProjectileFlyBys();
   UpdateReloadAudio();
 
   // Spent cases landing. Capped per frame so a minigun burst does not fire
@@ -894,6 +901,114 @@ int Game::TracePlayers(Vector3 origin, Vector3 dir, float maxDist, float* outT,
   }
   *outT = bestT;
   return best;
+}
+
+// Blood thrown off a wound, landing on whatever happens to be behind it.
+//
+// Each spot is its own short raycast in its own direction rather than one
+// decal stamped under the body, which is what lets the splatter climb walls,
+// run across a ceiling and wrap a corner: the cone is centred on the shot
+// direction -- material leaves a wound the way the round was going -- with a
+// wide spread, a downward bias for the part that just falls, and one cast
+// straight down for the pool underneath.
+void Game::SplatterBlood(Vector3 wound, Vector3 shotDir, float amount) {
+  if (Vector3LengthSqr(shotDir) < 0.001f) shotDir = Vector3{0, -1, 0};
+  shotDir = Vector3Normalize(shotDir);
+  const int casts = Clampf(amount, 1.0f, 18.0f);
+  // How far blood carries. Past this it has thinned out to nothing, and a
+  // decal appearing on a wall thirty metres away reads as a bug.
+  constexpr float kReach = 260.0f;
+
+  for (int i = 0; i < casts; ++i) {
+    // Mostly along the exit path, with a wide cone and a sag toward the
+    // floor. Every spot is rolled fresh, so no two hits stamp the same
+    // pattern twice.
+    Vector3 d = shotDir;
+    if (i == 0) {
+      d = Vector3{0.0f, -1.0f, 0.0f};        // the pool under the wound
+    } else {
+      const float spread = 0.75f;
+      d = Vector3Normalize(Vector3Add(
+          shotDir, Vector3{RandRange(-spread, spread),
+                           RandRange(-spread, spread) - 0.35f,
+                           RandRange(-spread, spread)}));
+    }
+    const RayHit h = world_.Raycast(Vector3Add(wound, Vector3Scale(d, 1.5f)), d,
+                                    kReach);
+    if (!h.hit) continue;
+    // Thins out with distance: a wall right behind someone takes a heavy
+    // spot, a far one takes a fleck.
+    const float fall = 1.0f - Clampf(h.dist / kReach, 0.0f, 1.0f);
+    const float size = RandRange(3.5f, 9.0f) * (0.45f + fall * 0.85f) *
+                       Clampf(amount / 6.0f, 0.6f, 1.5f);
+    if (size < 1.2f) continue;
+    // Arterial red through to nearly dry, varied per spot so a patch of
+    // splatter has depth in it rather than being one flat colour.
+    const unsigned char r =
+        static_cast<unsigned char>(RandRange(96.0f, 168.0f));
+    const Color c{r, static_cast<unsigned char>(RandRange(6.0f, 22.0f)),
+                  static_cast<unsigned char>(RandRange(8.0f, 24.0f)),
+                  static_cast<unsigned char>(RandRange(190.0f, 245.0f))};
+    fx_.AddDecal(h.point, h.normal, size, c, RandRange(55.0f, 95.0f));
+  }
+}
+
+// A rocket or a grenade going past your head. Bullets get their whoosh from
+// BulletTrace, which is a client-side prediction of a hitscan and knows the
+// whole flight in advance; a projectile is a server-simulated entity that
+// only ever reports where it is now, so the closest approach is found by
+// watching the distance turn around -- the frame it stops falling is the
+// frame the thing is level with you.
+void Game::UpdateProjectileFlyBys() {
+  const Vector3 ear = lp_.eyePos();
+  const std::vector<SimEntity>& ents = client_.entities();
+
+  // Drop tracks whose entity has gone (detonated, or out of the snapshot).
+  for (size_t i = flyBys_.size(); i-- > 0;) {
+    bool alive = false;
+    for (const SimEntity& e : ents)
+      if (e.id == flyBys_[i].id) { alive = true; break; }
+    if (!alive) flyBys_.erase(flyBys_.begin() + i);
+  }
+
+  for (const SimEntity& e : ents) {
+    // Only the things that actually fly. A mine on the floor is not a
+    // near miss.
+    if (e.kind != ENT_ROCKET && e.kind != ENT_GRENADE) continue;
+    // Our own ordnance never whooshes at us, the same rule bullets follow.
+    if (e.owner == client_.myId()) continue;
+
+    FlyByTrack* t = nullptr;
+    for (FlyByTrack& f : flyBys_)
+      if (f.id == e.id) { t = &f; break; }
+    if (!t) {
+      flyBys_.push_back(FlyByTrack{e.id, 1e9f, false});
+      t = &flyBys_.back();
+    }
+
+    const float d = Vector3Distance(e.pos, ear);
+    // Two ways to earn a whoosh, because closest approach on its own is not
+    // enough: these things detonate on contact, so one aimed anywhere near
+    // you hits you or the wall behind you and the distance never turns
+    // around. So it also fires the moment something inbound gets close --
+    // which is when you would hear it arriving anyway.
+    constexpr float kNear = 34.0f;    // inside this, the tighter near-miss
+    constexpr float kPass = 150.0f;   // audible at all
+    constexpr float kArrive = 90.0f;  // close enough to hear it coming
+    const bool receding = d > t->lastDist;
+    if (!t->played && (d < kArrive || (receding && t->lastDist < kPass))) {
+      t->played = true;
+      const float miss = fminf(d, t->lastDist);
+      // Tighter inside a few metres, the wider passby further out -- the same
+      // split the bullet audio uses.
+      const char* clip = miss < kNear ? "nearmiss" : "passby";
+      const float vol = Clampf(1.0f - miss / kPass, 0.12f, 1.0f) *
+                        (e.kind == ENT_ROCKET ? 0.95f : 0.6f);
+      assets_.PlayAt(clip, e.pos, ear, lp_.yaw, kPass * 2.0f,
+                     vol, RandRange(0.7f, 0.85f));
+    }
+    t->lastDist = d;
+  }
 }
 
 void Game::SurfaceImpact(Vector3 point, Vector3 normal, int brushIndex,
@@ -1464,11 +1579,18 @@ void Game::TryFireTank(bool pressed, bool held) {
                          3.4f);
     AddFlashLight(muzzle, Vector3{1.5f, 1.05f, 0.5f}, 620.0f, 0.13f);
 
-    const RayHit wh = world_.Raycast(muzzle, dir, kTankCannonRange);
+    // The shell is traced from clear of our own hull, not from the muzzle.
+    // A vehicle puts its bounding box into the world so collision and
+    // raycasts treat it as solid, and once the turret is traversed away from
+    // the hull that box grows enough to swallow the end of the barrel -- so
+    // the first thing the round hit was the tank firing it, and it blew
+    // itself up on the shot.
+    const Vector3 from = vehicles_.ClearOfHull(drivingVehicle_, muzzle, dir);
+    const RayHit wh = world_.Raycast(from, dir, kTankCannonRange);
     float t = wh.hit ? wh.dist : kTankCannonRange;
     bool head = false, leg = false;
-    const int hitP = TracePlayers(muzzle, dir, t, &t, &head, &leg);
-    const Vector3 end = Vector3Add(muzzle, Vector3Scale(dir, t));
+    const int hitP = TracePlayers(from, dir, t, &t, &head, &leg);
+    const Vector3 end = Vector3Add(from, Vector3Scale(dir, t));
 
     // Same travelling tracer the rifles use, just much bigger and slower, with
     // a smoke trail laid along its path so the shell reads as a shell.
@@ -1589,6 +1711,8 @@ void Game::DoHitscan() {
       const float dmg = d.damage * mult * fall;
       client_.SendHit(static_cast<uint8_t>(hit), dmg, lp_.arsenal.current, head);
       fx_.BloodSpray(end, dir, head ? 7.0f : 5.0f);
+      // ...and it lands on whatever is behind them.
+      SplatterBlood(end, dir, head ? 6.0f : 4.0f);
       hitMarker_ = 0.25f;
       anyHead = anyHead || head;
       assets_.Play(head ? "headshot" : "hitmark", head ? 0.55f : 0.32f, 0.5f,
@@ -1846,8 +1970,13 @@ void Game::ProcessEvents() {
         const Vector3 p{e.x, e.y, e.z};
         if (e.b != me) {
           const Vector3 sd{e.dx, e.dy, e.dz};
-          fx_.BloodSpray(p, Vector3LengthSqr(sd) > 0.01f ? sd : Vector3{0, 1, 0},
-                         4.5f);
+          const Vector3 dir =
+              Vector3LengthSqr(sd) > 0.01f ? sd : Vector3{0, 1, 0};
+          fx_.BloodSpray(p, dir, 4.5f);
+          // Every hit throws blood onto the geometry behind it, not just the
+          // ones we landed ourselves -- a firefight across the street should
+          // leave the wall marked whoever was shooting.
+          SplatterBlood(p, dir, 4.0f);
         }
         if (e.a == me && e.b != me) {
           hitMarker_ = 0.25f;
@@ -1903,6 +2032,17 @@ void Game::ProcessEvents() {
           const bool explosive =
               e.weapon == WEAPON_ROCKET || e.weapon == WEAPON_GRENADE ||
               e.weapon == WEAPON_MINE || e.weapon == WEAPON_TRIPFLARE;
+
+          // A death paints the place it happened. Far more of it than a hit,
+          // and thrown in every direction as well as down the shot line,
+          // because a body coming apart does not respect the exit path. An
+          // explosive one goes everywhere.
+          SplatterBlood(wound, shotDir, explosive ? 16.0f : 10.0f);
+          SplatterBlood(wound, Vector3{0.0f, -1.0f, 0.0f}, 6.0f);
+          if (explosive) {
+            SplatterBlood(wound, Vector3{0.0f, 1.0f, 0.0f}, 8.0f);
+            SplatterBlood(wound, Vector3Negate(shotDir), 8.0f);
+          }
           const float force = explosive ? 320.0f
                             : (e.weapon == WEAPON_SNIPER   ? 200.0f
                              : e.weapon == WEAPON_SHOTGUN  ? 175.0f
@@ -2013,7 +2153,20 @@ void Game::DrawGame() {
   // the world appearing to carry you along on nothing -- except for a car,
   // where the glTF body is swapped for GTJ3D's own interior shell, which is
   // what obj_car drew once you were at the wheel.
-  vehicles_.Draw(assets_, cam.position, -1);
+  // The car you are driving is swapped for GTJ3D's own interior: obj_car's
+  // `interior_model`, the taller cabin wearing frame 1 of its skin, with its
+  // own steering wheel on its own quad in front of you.
+  const bool inCar = drivingVehicle_ >= 0 && !lp_.dead && enterTimer_ == 0 &&
+                     VehicleSystem::HasGtjShell(
+                         vehicles_.list()[drivingVehicle_].kind) &&
+                     assets_.haveCarSkins();
+  vehicles_.Draw(assets_, cam.position, inCar ? drivingVehicle_ : -1);
+  // Last, because the cabin's glass and the steering wheel are transparent
+  // and have to composite over everything they are in front of -- which,
+  // from the driver's seat, is the entire rest of the world.
+  if (inCar)
+    vehicles_.DrawGtjShell(assets_, drivingVehicle_, cam.position,
+                           /*interior=*/true, driveTurning_);
   if (debugShowcase_) {
     // A static enemy 46 units ahead, turned side-on, for model inspection.
     const Vector3 fwd = FlatForward(lp_.yaw);
@@ -2083,25 +2236,17 @@ void Game::DrawGame() {
       // Instrument coaming along the bottom of the glass.
       DrawRectangle(0, (int)(H * 0.855f), W, H, Color{22, 24, 27, 245});
       DrawRectangle(0, (int)(H * 0.855f), W, 3, Color{78, 84, 92, 255});
-    } else if (v.kind != VEH_TANK) {
-      // Looking out through glass. Two layers: a light cool wash over the
-      // whole view, and a slightly stronger band round the edges where a
-      // windscreen is thickest and most raked. Deliberately gentle -- it has
-      // to read as glass without dimming what you are trying to shoot at.
-      DrawRectangle(0, 0, W, H, Color{176, 206, 226, 26});
-      const int band = (int)(H * 0.13f);
-      DrawRectangle(0, 0, W, band, Color{150, 180, 205, 30});
-      DrawRectangle(0, H - band, W, band, Color{150, 180, 205, 26});
-      const int side = (int)(W * 0.07f);
-      DrawRectangle(0, 0, side, H, Color{150, 180, 205, 24});
-      DrawRectangle(W - side, 0, side, H, Color{150, 180, 205, 24});
+    } else if (v.kind != VEH_TANK && !inCar) {
+      // Cars wearing GTJ3D's shell have real glazing in front of them, drawn
+      // on obj_car's own window panels. This flat wash is only for the ones
+      // that did not get it -- the supercar, or any car if the skins were
+      // never staged.
+      DrawRectangle(0, 0, W, H, Color{176, 206, 226, 22});
     }
-    if (v.kind != VEH_TANK && v.kind != VEH_HELI && enterTimer_ == 0) {
-      // GTJ3D's own steering wheel, drawn at its authored colour: no paint
-      // tint, no glass over it, no world lighting on it. It is the one piece
-      // of the driving view that is UI rather than scenery, and the arms on it
-      // are skin -- run either of those through the cabin's tint and the hands
-      // change colour with the car.
+    if (v.kind != VEH_TANK && v.kind != VEH_HELI && enterTimer_ == 0 &&
+        !inCar) {
+      // Same fallback: obj_car's own wheel is drawn in the world by
+      // VehicleSystem::DrawGtjShell when the shell is there.
       // A little vertical shove from the road, scaled by speed.
       const float bump = sinf((float)now_ * 26.0f) * 2.2f *
                          Clampf(fabsf(v.speed) / 8.0f, 0.0f, 1.0f);

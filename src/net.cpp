@@ -212,6 +212,7 @@ bool Server::Start(uint16_t port, const World* world, const std::string& mapName
     slots_[s].used = true;
     slots_[s].bot = true;
     slots_[s].botArsenal.ResetFull();
+    slots_[s].botHasLauncher = GetRandomValue(0, 4) == 0;
     slots_[s].state = PlayerState{};
     slots_[s].state.id = static_cast<uint8_t>(s);
     slots_[s].state.active = 1;
@@ -242,6 +243,8 @@ bool Server::SpawnBotAt(Vector3 pos, float yawDeg, float skill, float health) {
     s.used = true;
     s.bot = true;
     s.botArsenal.ResetFull();
+    // One in five carries a launcher; the rest have grenades and that is all.
+    s.botHasLauncher = GetRandomValue(0, 4) == 0;
     s.botSkill = Clampf(skill, 0.0f, 1.0f);
     s.botHealth = health;
     s.state = PlayerState{};
@@ -289,6 +292,8 @@ int Server::SetBotPopulation(int want, float skill, float health) {
     s.used = true;
     s.bot = true;
     s.botArsenal.ResetFull();
+    // One in five carries a launcher; the rest have grenades and that is all.
+    s.botHasLauncher = GetRandomValue(0, 4) == 0;
     s.botSkill = Clampf(skill, 0.0f, 1.0f);
     s.botHealth = health;
     s.state = PlayerState{};
@@ -690,7 +695,8 @@ void Server::UpdateBots() {
       if (s.botHeavyDelay > 0) --s.botHeavyDelay;
       if (s.botHeavyDelay == 0 && fabsf(diff) < 10.0f) {
         int heavy = -1;
-        if (dist > 300.0f && dist < 1500.0f && GetRandomValue(0, 1) == 0)
+        if (s.botHasLauncher && dist > 300.0f && dist < 1500.0f &&
+            GetRandomValue(0, 1) == 0)
           heavy = WEAPON_ROCKET;
         else if (dist > 170.0f && dist < 620.0f)
           heavy = WEAPON_GRENADE;

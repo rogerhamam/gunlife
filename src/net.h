@@ -147,6 +147,11 @@ struct ServerSlot {
   // weapons are rate-limited per bot rather than by ammunition, so a squad
   // lays down the occasional rocket instead of a constant barrage.
   int botHeavyDelay = 0;
+  // Only about one operator in five is carrying a launcher. Rolled once when
+  // the slot is filled, so a squad is mostly rifles with the odd rocket
+  // coming in rather than a firing line of launchers. The rest make do with
+  // grenades.
+  bool botHasLauncher = false;
 };
 
 class Server {

@@ -187,8 +187,10 @@ class VehicleSystem {
   // at the wheel.
   //
   // True when it drew something; false means the skins are not staged.
+  // `turning` is obj_player.turning -- 0 straight, 1 left, 2 right -- and
+  // picks the steering wheel frame, which is only drawn for the interior.
   bool DrawGtjShell(const Assets& assets, int index, Vector3 camPos,
-                    bool interior) const;
+                    bool interior, int turning = 0) const;
   // Whether this vehicle has a GTJ3D shell at all -- the saloon and the SWAT
   // van are obj_car's own two variants; the tank, gunship and supercar are
   // not and have no equivalent.

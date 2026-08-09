@@ -68,10 +68,18 @@ const char* const kCarSkinFiles[] = {
     "tex_bluecar", "tex_redcar", "tex_whitecar", "tex_yellowcar",
     "tex_pinkcar", "tex_limecar", "tex_blackcar",
 };
+// Measured off the staged textures, not guessed: the mean colour of each
+// skin. Eyeballed values had a light grey car matching *pink* -- grey sits
+// almost equidistant from several of these, and being wrong by a little in
+// RGB is being wrong by a lot to look at.
 const Color kCarSkinColors[] = {
-    {40, 70, 170, 255}, {170, 40, 36, 255}, {226, 226, 230, 255},
-    {228, 190, 40, 255}, {220, 110, 172, 255}, {124, 200, 60, 255},
-    {34, 34, 38, 255},
+    { 38,  95, 153, 255},   // blue
+    {154,  38,  46, 255},   // red
+    {193, 193, 193, 255},   // white
+    {197, 163,  47, 255},   // yellow
+    {209,  48, 197, 255},   // pink
+    { 48, 209,  52, 255},   // lime
+    { 35,  35,  35, 255},   // black
 };
 
 struct SoundDef {

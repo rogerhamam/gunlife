@@ -89,10 +89,16 @@ armour at a sixth rate, rockets and grenades do the job properly.
 The operators themselves are one side and cannot hurt each other, by rifle or
 by blast. Left on the deathmatch rule of "shoot whoever is nearest", a squad
 arriving together gunned itself down in the street before it reached anybody.
-They carry grenades and launchers as well as small arms, rate-limited per
-operator and with a minimum range on both — a bot that fires a launcher into
-somebody's chest takes the blast itself, and its own explosives are the only
-ones that can still hurt it.
+About **one in five** carries a launcher — rolled once when the slot is filled,
+so a squad is mostly rifles with the odd rocket coming in rather than a firing
+line of launchers. The rest make do with grenades. Both are rate-limited per
+operator and have a minimum range: a bot that fires a launcher into somebody's
+chest takes the blast itself, and its own explosives are the only ones that can
+still hurt it.
+
+The van has no gun of any kind — it never sets `firedWeapon`, so there is
+nothing for it to fire. Everything it brings to the fight walks out of the back
+and shoots on its own two feet.
 
 `--storywave <n>` starts partway up the curve, which is how the screenshot
 tests reach the armour without playing six waves first.
@@ -273,6 +279,18 @@ other way — the round shoving material back out of the entry wound — and a m
 hanging over both. Rockets trail burning exhaust and a smoke column along their
 flight path.
 
+**Blood lands on the scenery.** Every hit and every death throws spots off the
+wound and each one is its own short raycast in its own direction, so the
+splatter climbs walls, runs across ceilings and wraps corners rather than being
+a decal stamped on the ground under the body. The cone follows the shot —
+material leaves a wound the way the round was going — with a wide spread, a sag
+toward the floor and one cast straight down for the pool. Every spot is rolled
+fresh: size, colour from arterial through to nearly dry, and lifetime, so no
+two hits stamp the same pattern and a patch of splatter has depth in it. It
+thins with distance, so a wall right behind somebody takes a heavy spot and a
+far one takes a fleck. A death paints far more of it, and an explosive death
+throws it in every direction at once.
+
 **Deaths are physical, and shaped by where the round landed.** The server
 reports the direction of the killing blow and how far up the body it hit. The
 figure is broken into **fourteen segments** — helmet, head, neck, two upper
@@ -376,6 +394,14 @@ dedicated bullet clips with Naval Command's:
 * **Bullet hit** — a distinct impact layer when a round lands on a player.
 * **Dry fire and last round** — a click on empty, a warning ping on the last
   round in the magazine.
+* **Rockets and grenades whoosh too.** A bullet's fly-by comes from
+  `BulletTrace`, a client-side prediction of a hitscan that knows the whole
+  flight in advance. A projectile is a server-simulated entity that only ever
+  reports where it is *now*, so its near-miss is measured off that. Closest
+  approach on its own is not enough — these things detonate on contact, so one
+  aimed anywhere near you hits you or the wall behind you and the distance
+  never turns around — so it fires either when something inbound gets within
+  90 units, or when it passes and starts receding inside 150.
 
 Every explosion plays exactly one report — layering two made every explosion
 sound doubled — and for **rockets and grenades alike** it is GTJ3D's own
@@ -463,19 +489,20 @@ are still exactly the panels it built — the four that are really windows are
 drawn as glass rather than as paint, with depth writes off so the world
 outside them stays alive.
 
-The interior view is the same body and the same textures as the outside —
-you are inside the car you got into, not a stand-in for it — with a light
-cool wash over the view and a slightly stronger band round the edges, where a
-windscreen is thickest and most raked. The steering wheel is drawn after all
-of that, at its authored colour: no paint tint, no glass over it, no world
-lighting on it. It is the one piece of the driving view that is UI rather
-than scenery, and the arms on it are skin — run either through the cabin's
-tint and the hands change colour with the car.
+The steering wheel is drawn last of all, after the glazing, at full white: no
+paint tint, no glass over it, no lighting on it. It is the one piece of the
+driving view that is UI rather than scenery, and the arms on it are skin — run
+either through the cabin's tint and the hands change colour with the car.
 
-`obj_car`'s shell is still built, primitive for primitive from its create
-event, and still wears GTJ3D's own skins: it is the stand-in when a
-vehicle's `.glb` is missing, which beats the hand-stacked boxes that used to
-fill in. `interior` picks the taller cabin and frame 1 of the skin.
+The paint picks whichever of GTJ3D's seven skins is nearest, and those seven
+colours are **measured off the staged textures**, not eyeballed. Guessed values
+had a light grey car coming out *pink*: grey sits almost equidistant from
+several of them, and being wrong by a little in RGB is being wrong by a lot to
+look at.
+
+The same shell, with `box_height` back at 6 and frame 0 of the skin, is the
+stand-in when a vehicle's `.glb` is missing — which beats the hand-stacked
+boxes that used to fill in.
 
 ### The gunship
 
@@ -503,13 +530,18 @@ slid along level ground. Nose-down is what pulls it along, so looking down
 flies you forward — that sign was inverted too, which flew it backwards out of
 a dive.
 
-**Rockets leave the airframe before they arm.** A vehicle puts its bounding
+**Ordnance leaves the airframe before it arms.** A vehicle puts its bounding
 box into the world so collision and raycasts treat it as solid, and the wing
 pylons are inside that box — so a rocket detonated on the frame it was
 created, which read as the pods simply not working. The projectile is
 simulated on the server and the server knows nothing about vehicles, so the
 launch point is pushed out along the line of fire until it is clear of the
 hull (`VehicleSystem::ClearOfHull`) instead.
+
+The tank has the same problem for the same reason: once the turret traverses
+away from the hull the bounding box grows enough to swallow the end of the
+barrel, so the first thing a shell hit was the tank that fired it. Its round is
+traced from clear of its own hull now too — the player's and the AI's alike.
 
 Both gunship weapons are audible now. The minigun's burst loop only ever
 tested for the *tank's* roof gun, so the gunship fired in silence; the pods
@@ -778,6 +810,10 @@ than that, those numbers will say which stage actually cost the time.
 ## Known limits
 
 * No ammo or health pickups; you get a full loadout on every respawn.
+* Blood shares one 1400-decal budget with bullet holes and scorch marks,
+  oldest first. The cap was 420, which was ample when nothing bled; one death
+  throws up to thirty spots, so a firefight in a doorway used to start eating
+  its own splatter within seconds. A long enough one still will.
 * Enemies do not animate — no walk cycle, no firing pose.
 * Corpses come apart on impact rather than being solved as a jointed ragdoll;
   parts are independent rigid bodies, which reads well but will occasionally

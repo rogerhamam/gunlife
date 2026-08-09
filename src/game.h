@@ -149,7 +149,19 @@ class Game {
                    Vector3 hitPoint, Vector3 hitNormal, int brushIndex,
                    uint8_t weapon, bool selfShot);
   void UpdateBullets(float dt);
+  // Rockets and grenades in flight go past your ear too. Bullets get their
+  // whoosh from BulletTrace, which is a client-side prediction of a hitscan;
+  // a projectile is a server-simulated entity with a real position, so its
+  // near-miss is measured off that instead -- it fires on the frame the thing
+  // is at its closest and starting to recede.
+  void UpdateProjectileFlyBys();
   void SurfaceImpact(Vector3 point, Vector3 normal, int brushIndex, bool loud);
+  // Throws blood off a wound and lets it land on whatever is behind it. Each
+  // spot is a separate cast in its own direction, so the splatter follows the
+  // walls, floors and ceilings it actually reaches instead of being a decal
+  // stamped under the body. `amount` scales the number of casts and their
+  // size -- a graze throws two or three, a death throws a dozen.
+  void SplatterBlood(Vector3 wound, Vector3 shotDir, float amount);
   // Reload sound schedule, driven off the GTJ3D clips.
   void UpdateReloadAudio();
   // Getting in, driving and getting out. Runs on the 60 Hz tick so the GTJ3D
@@ -262,6 +274,15 @@ class Game {
   void AddFlashLight(Vector3 pos, Vector3 color, float radius, float life);
 
   std::vector<BulletTrace> bullets_;
+  // Projectiles whose fly-by has already been played, and how close they were
+  // last frame, keyed by entity id. Without the "already played" set a rocket
+  // sitting near the closest-approach point would re-trigger every frame.
+  struct FlyByTrack {
+    uint16_t id = 0;
+    float lastDist = 1e9f;
+    bool played = false;
+  };
+  std::vector<FlyByTrack> flyBys_;
   // Reload audio bookkeeping: which weapon is reloading and how far through it
   // we were last frame, so each stage plays exactly once.
   int reloadAudioWeapon_ = -1;
