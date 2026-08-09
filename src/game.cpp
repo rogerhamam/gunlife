@@ -126,11 +126,38 @@ void Game::StartHost() {
   server_.Stop();
   client_.Disconnect();
   singlePlayer_ = false;
-  if (!server_.Start(opts_.port, &world_, world_.name(), opts_.bots)) {
+  coopHost_ = opts_.hostCoop;
+  // Co-op is the campaign, so it starts empty and the waves fill it; a duel
+  // is strictly the two of you, so it starts empty too. Either way the bot
+  // count from the menu does not apply.
+  const int bots = 0;
+  if (opts_.hostCoop && opts_.map == "devtest") {
+    // Same reasoning as single-player story: the dev range is a gun line on a
+    // plain, not somewhere to fight a campaign.
+    opts_.map = "urban";
+    world_.Load(DataPath("maps/urban.map"));
+    fx_.Clear();
+    drivingVehicle_ = -1;
+    enterTimer_ = 0;
+    vehicles_.Reset(world_);
+  }
+  if (!server_.Start(opts_.port, &world_, world_.name(), bots)) {
     errorText_ = "Could not open port " + std::to_string(opts_.port) +
                  " (already in use?)";
     mode_ = Mode::Error;
     return;
+  }
+  server_.SetCoop(opts_.hostCoop);
+  if (opts_.hostCoop) {
+    // The campaign runs here, on the host, exactly as it does in single
+    // player -- the difference is that its state is relayed to whoever else
+    // joins, and the bots treat both humans as the enemy.
+    server_.SetBotRespawn(false);
+    storyMode_ = true;
+    story_.BeginAt(opts_.storyWave > 0 ? opts_.storyWave : 1);
+    vehicles_.ClearHostiles();
+    devGodMode_ = false;
+    devNoclip_ = false;
   }
   if (!client_.Connect("127.0.0.1", server_.port(), opts_.name)) {
     errorText_ = client_.error();
@@ -463,6 +490,23 @@ void Game::TickStory() {
   const bool wasFighting = story_.phase() == Story::Phase::Fighting;
   story_.Tick(EnemiesAlive());
 
+  // Hand the campaign to the server so a co-op partner sees the same wave,
+  // enemy count and lives. Story runs here on the host and nowhere else, so
+  // without this the other player is fighting a wave they cannot see.
+  if (coopHost_) {
+    StoryNet sn;
+    sn.valid = true;
+    sn.phase = static_cast<uint8_t>(story_.phase());
+    sn.wave = static_cast<uint8_t>(story_.wave());
+    sn.lives = static_cast<uint8_t>(story_.lives());
+    sn.enemiesLeft = static_cast<uint16_t>(
+        EnemiesAlive() + story_.reinforcementsLeft());
+    sn.killed = static_cast<uint16_t>(story_.killed());
+    sn.heavy = story_.spec().heavy;
+    sn.timer = story_.phaseTimer();
+    server_.SetStoryState(sn);
+  }
+
   if (story_.phase() == Story::Phase::Failed) {
     // Nothing else left to run: clear the map so the defeat screen is quiet.
     if (server_.aliveBots() > 0) server_.SetBotPopulation(0, 0.0f, kMaxHealth);
@@ -507,6 +551,7 @@ void Game::LeaveGame() {
   if (storyMode_) {
     story_.Reset();
     storyMode_ = false;
+    coopHost_ = false;
     vehicles_.ClearHostiles();
     vehicles_.SetThreat(Vector3{}, false);
     server_.SetBotRespawn(true);
@@ -2209,6 +2254,15 @@ void Game::ProcessEvents() {
         // one blowing itself up on its own grenade is not your kill.
         if (storyMode_ && story_.active() && killer == me && victim != me)
           story_.AddKill();
+        // Co-op shares one pool of lives, so the guest going down has to cost
+        // one as well. Our own death is already counted on the edge where the
+        // server reports it, and bots are team 1 -- only the other human is a
+        // team 0 slot that is not us.
+        if (coopHost_ && story_.active() && victim != me && victim >= 0 &&
+            victim < kMaxPlayers && ps[victim].active &&
+            ps[victim].cur.team == 0) {
+          story_.NotifyDeath();
+        }
 
         // ---- ragdoll / gib ---------------------------------------------
         // The server tells us the direction of the killing blow and how high
@@ -2545,26 +2599,58 @@ void Game::DrawGame() {
   renderer_.DrawHud(assets_, info, hud, W, H);
 
   // --- story mode ---------------------------------------------------------
-  if (storyMode_ && story_.active()) {
-    // A permanent strip at the top: which wave, and what is left of it.
-    const StoryWave& w = story_.spec();
-    const int left = EnemiesAlive() + story_.reinforcementsLeft();
+  // Either we are running the campaign ourselves -- single player, or hosting
+  // co-op -- or we are the guest in someone else's, in which case the same
+  // numbers arrive over the wire and drive exactly the same HUD.
+  const StoryNet& sn = client_.story();
+  const bool ownStory = storyMode_ && story_.active();
+  const bool guestStory = !ownStory && sn.valid;
+  if (ownStory || guestStory) {
+    const Story::Phase phase =
+        ownStory ? story_.phase() : static_cast<Story::Phase>(sn.phase);
+    const int waveNo = ownStory ? story_.wave() : sn.wave;
+    const bool heavy = ownStory ? story_.spec().heavy : sn.heavy;
+    const int left = ownStory ? EnemiesAlive() + story_.reinforcementsLeft()
+                              : sn.enemiesLeft;
+    const int killedN = ownStory ? story_.killed() : sn.killed;
+    const int livesN = ownStory ? story_.lives() : sn.lives;
     char strip[160];
     snprintf(strip, sizeof(strip),
              "WAVE %d%s      ENEMIES %d      KILLED %d      LIVES %d",
-             story_.wave(), w.heavy ? "  (HEAVY)" : "", left, story_.killed(),
-             story_.lives());
+             waveNo, heavy ? "  (HEAVY)" : "", left, killedN, livesN);
     const int fs = (int)(21 * hud.scale);
     const int sw = MeasureText(strip, fs);
     DrawRectangle(W / 2 - sw / 2 - 16, 6, sw + 32, fs + 12,
                   Color{0, 0, 0, 120});
     DrawText(strip, W / 2 - sw / 2, 12, fs,
-             w.heavy ? Color{255, 170, 110, 245} : Color{225, 232, 240, 235});
+             heavy ? Color{255, 170, 110, 245} : Color{225, 232, 240, 235});
 
-    // ...and the big announcement in the middle when there is one.
-    const std::string big = story_.banner();
+    // ...and the big announcement in the middle when there is one. A guest
+    // rebuilds it from the phase and the wave number rather than being sent
+    // the text.
+    std::string big, sub2;
+    if (ownStory) {
+      big = story_.banner();
+      sub2 = story_.subBanner();
+    } else {
+      char b[96];
+      if (phase == Story::Phase::Briefing) {
+        snprintf(b, sizeof(b), "WAVE %d", waveNo); big = b;
+        snprintf(b, sizeof(b), "%sincoming in %.0f",
+                 heavy ? "HEAVY ASSAULT -- " : "", sn.timer + 0.99f);
+        sub2 = b;
+      } else if (phase == Story::Phase::Cleared) {
+        snprintf(b, sizeof(b), "WAVE %d CLEARED", waveNo); big = b;
+        snprintf(b, sizeof(b), "wave %d in %.0f", waveNo + 1, sn.timer + 0.99f);
+        sub2 = b;
+      } else if (phase == Story::Phase::Failed) {
+        big = "MISSION FAILED";
+        snprintf(b, sizeof(b), "reached wave %d   %d killed", waveNo, killedN);
+        sub2 = b;
+      }
+    }
     if (!big.empty()) {
-      const bool failed = story_.phase() == Story::Phase::Failed;
+      const bool failed = phase == Story::Phase::Failed;
       const int bs = (int)(52 * hud.scale);
       const int bw = MeasureText(big.c_str(), bs);
       const int by = (int)(H * (failed ? 0.36f : 0.30f));
@@ -2572,7 +2658,6 @@ void Game::DrawGame() {
                Color{0, 0, 0, 170});
       DrawText(big.c_str(), W / 2 - bw / 2, by, bs,
                failed ? Color{235, 90, 80, 255} : Color{255, 220, 120, 255});
-      const std::string sub2 = story_.subBanner();
       if (!sub2.empty()) {
         const int ss = (int)(19 * hud.scale);
         const int sw2 = MeasureText(sub2.c_str(), ss);
@@ -2733,12 +2818,19 @@ void Game::DrawMenu() {
   snprintf(mapBlurb, sizeof(mapBlurb),
            "left/right to change   (%d of %d)", curMap + 1, nMaps);
 
+  char hostItem[96];
+  snprintf(hostItem, sizeof(hostItem), "HOST A GAME:  %s",
+           opts_.hostCoop ? "CO-OP" : "1V1");
+
   const int kMapRow = 4;
-  const char* items[] = {"STORY MODE", "SINGLE PLAYER", "HOST A GAME",
+  const int kHostRow = 2;
+  const char* items[] = {"STORY MODE", "SINGLE PLAYER", hostItem,
                          "JOIN BY IP", mapItem, "QUIT"};
   const char* blurbs[] = {"waves of SWAT, then armour, then gunships",
                           "offline match against bots, dev tools on",
-                          "host a match and play in it",
+                          opts_.hostCoop
+                              ? "the campaign for two, both on the same side"
+                              : "just the two of you, no bots",
                           "connect to a friend's server", mapBlurb, ""};
   const int n = 6;
   const int kJoinRow = 3;
@@ -2830,6 +2922,12 @@ void Game::DrawMenu() {
     int step = 0;
     if (IsKeyPressed(KEY_RIGHT_BRACKET) || IsKeyPressed(KEY_RIGHT)) step = 1;
     if (IsKeyPressed(KEY_LEFT_BRACKET) || IsKeyPressed(KEY_LEFT)) step = -1;
+    // Left/right on the host row flips between co-op and a duel, the same
+    // way it steps the map.
+    if (menuIndex_ == kHostRow && step != 0) {
+      opts_.hostCoop = !opts_.hostCoop;
+      return;
+    }
     if (menuIndex_ == kMapRow &&
         (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)))
       step = 1;

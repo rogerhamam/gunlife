@@ -44,6 +44,24 @@ enum MsgType : uint8_t {
   // it: it rejects `target == slot` outright, and it caps damage at what the
   // named weapon could do, which no weapon-shaped cap fits.
   MSG_FALL,
+  // Host -> clients: the wave campaign's state, so a co-op partner sees the
+  // same wave number, enemy count and lives the host does. Story mode runs on
+  // the host's client and drives its local server directly, so this is the
+  // only way the other player learns any of it.
+  MSG_STORY,
+};
+
+// What the wave campaign looks like from outside the host. Kept flat and
+// small: it rides along with the roster, not the snapshot.
+struct StoryNet {
+  bool valid = false;
+  uint8_t phase = 0;      // matches Story::Phase
+  uint8_t wave = 0;
+  uint8_t lives = 0;
+  uint16_t enemiesLeft = 0;
+  uint16_t killed = 0;
+  bool heavy = false;
+  float timer = 0.0f;
 };
 
 // Stand-in weapon id on a death event, so the kill feed can tell a fall from
@@ -192,6 +210,15 @@ class Server {
   // freed for the next reinforcement.
   void SetBotRespawn(bool on) { botRespawn_ = on; }
 
+  // --- co-operative play ---------------------------------------------------
+  // Everyone human on one side, and unable to hurt each other. Off, the two
+  // humans are put on opposite teams and fight normally.
+  void SetCoop(bool on);
+  bool coop() const { return coop_; }
+  // The host hands its campaign state over once a second or so, and the
+  // server relays it to whoever else is connected.
+  void SetStoryState(const StoryNet& s) { story_ = s; }
+
  private:
   void HandlePacket(const Endpoint& from, const uint8_t* data, int len, double now);
   int  FindSlot(const Endpoint& e) const;
@@ -200,6 +227,7 @@ class Server {
   void PushEvent(const NetEvent& e);
   void BroadcastSnapshot();
   void BroadcastRoster();
+  void BroadcastStory();
   void BroadcastEvents();
   void SpawnProjectile(int owner, int weapon, Vector3 origin, Vector3 dir);
   void PlaceCharge(int owner, int weapon, Vector3 pos, Vector3 normal, Vector3 beamEnd);
@@ -219,6 +247,8 @@ class Server {
   uint16_t nextEntId_ = 1;
 
   bool botRespawn_ = true;
+  bool coop_ = false;
+  StoryNet story_;
 
   ServerSlot slots_[kMaxPlayers];
   std::vector<SimEntity> ents_;
@@ -263,6 +293,9 @@ class Client {
   bool haveSelf() const { return myId_ >= 0 && players_[myId_].active; }
 
   double serverTimeOffset() const { return timeOffset_; }
+  // The host's campaign state, when it is running one. `valid` is false in an
+  // ordinary match and on the host itself, which reads its own Story.
+  const StoryNet& story() const { return story_; }
 
  private:
   enum State { IDLE, CONNECTING, CONNECTED } state_ = IDLE;
@@ -283,6 +316,7 @@ class Client {
   RemotePlayer players_[kMaxPlayers];
   std::vector<SimEntity> ents_;
   std::vector<NetEvent> pending_;
+  StoryNet story_;
 };
 
 }  // namespace kaj

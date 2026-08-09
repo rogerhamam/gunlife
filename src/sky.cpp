@@ -297,8 +297,14 @@ const char* Sky::bandName() const {
 }
 
 // How likely each band is on any given roll, and the storm value it means.
-// Weighted so the sky is usually workable and a real storm is an event: six
-// rolls a day makes a storm turn up rather less than once per ten minutes.
+//
+// Rain starts above a storm value of 0.28, so Overcast and Storm are the wet
+// bands and Clear and Fair are dry. Those two used to carry 22 + 16 = 38 of
+// the 100 weight between them; they carry 11 + 8 = 19 now, which is exactly
+// half as much rain, with what they gave up going to Clear and Fair. Fair's
+// ceiling also comes down from 0.30 to 0.26 so that "fair" means genuinely
+// dry rather than a trace of drizzle at the top of its range.
+//
 // The range on each is what stops two overcast spells looking identical.
 namespace {
 struct BandOdds {
@@ -307,10 +313,10 @@ struct BandOdds {
   float stormLo, stormHi;
 };
 const BandOdds kBands[] = {
-    {WeatherBand::Clear,    30, 0.00f, 0.06f},
-    {WeatherBand::Fair,     32, 0.12f, 0.30f},
-    {WeatherBand::Overcast, 22, 0.42f, 0.62f},
-    {WeatherBand::Storm,    16, 0.78f, 1.00f},
+    {WeatherBand::Clear,    40, 0.00f, 0.06f},
+    {WeatherBand::Fair,     41, 0.12f, 0.26f},
+    {WeatherBand::Overcast, 11, 0.42f, 0.62f},
+    {WeatherBand::Storm,     8, 0.78f, 1.00f},
 };
 }  // namespace
 
@@ -441,9 +447,10 @@ void Sky::Update(float dt, Assets& assets, Vector3 listener) {
   }
 
   // ---- ambient beds ----------------------------------------------------
-  // The weather bed -- wind and rain -- at two thirds of what it was. At full
-  // volume a storm sat on top of the gunfire instead of behind it.
-  constexpr float kWeatherVolume = 0.67f;
+  // The weather bed -- wind and rain -- at 0.54 of what it originally was:
+  // two thirds, then a further fifth off that. At full volume a storm sat on
+  // top of the gunfire instead of behind it.
+  constexpr float kWeatherVolume = 0.67f * 0.80f;
   const float windVol =
       Clampf(0.05f + storm_ * 0.35f, 0.0f, 0.45f) * kWeatherVolume;
   assets.PlayLoop("wind", windVol);

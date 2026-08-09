@@ -161,6 +161,24 @@ behaves identically online.
 
 ### Hosting and joining
 
+Hosting offers two things, and the menu row cycles between them with
+left/right:
+
+* **CO-OP** — the wave campaign for two, both of you on the same side. The
+  operators treat you both as the enemy and neither of you can shoot the
+  other, by bullet or by blast. The campaign still runs on the *host*, as it
+  does in single player, and its state is relayed to the guest four times a
+  second (`MSG_STORY`) so both of you see the same wave number, enemy count
+  and lives — the guest has no `Story` of its own to run, and without the
+  relay would be fighting a wave it could not see. Hosting co-op on the Dev
+  Test Range moves you to the Urban Complex for the same reason single-player
+  story does.
+* **1V1** — just the two of you, no bots, on opposite teams.
+
+Either way the menu's bot count does not apply.
+
+    play.bat --coop
+    play.bat --duel
     play.bat --host --bots 4
     play.bat --connect 192.168.1.20
     play.bat --sp --weather storm
@@ -169,7 +187,8 @@ Or pick **JOIN BY IP** in the menu and simply start typing — selecting that ro
 gives the address field focus, arrow keys still move off it, and Enter
 connects. `E` toggles the field by hand from anywhere.
 
-Flags: `--sp`, `--story`, `--storywave <n>`, `--host`, `--connect <ip>`,
+Flags: `--sp`, `--story`, `--storywave <n>`, `--host`, `--coop`, `--duel`,
+`--connect <ip>`,
 `--port <n>`, `--name <n>`, `--bots <n>`,
 `--weather clear|fair|overcast|storm|night|cycle`, `--width`, `--height`,
 `--fullscreen`. Default port is UDP **27015**.
@@ -977,9 +996,10 @@ than that, those numbers will say which stage actually cost the time.
   toward you and nudges around whatever it bumps rather than routing past it.
 * Weather is cosmetic: rain does not wet surfaces and lightning does not light
   geometry beyond the ambient flash.
-* Story mode is single player only. The campaign runs on the client and drives
-  the local server directly; a joiner would see the wave enemies but not the
-  wave state.
+* The campaign runs on the host and drives its local server directly. A guest
+  sees the wave state because the host relays it, but only the host's `Story`
+  actually decides anything — so if the host quits, the campaign goes with it.
+  Lives are shared and either player's death spends one.
 * The protocol carries twelve player slots, so that is the hard ceiling on
   live enemies. A SWAT van arriving on a wave that is already at its
   concurrent cap will put fewer than eight operators on the ground — it logs

@@ -39,6 +39,9 @@ struct LaunchOptions {
   // screenshot tests, which need to reach the armour and the gunships without
   // playing six waves first.
   int storyWave = 0;
+  // What hosting puts on. Co-op is the story campaign with everyone human on
+  // one side against the waves; a duel is the two of you and nothing else.
+  bool hostCoop = true;
 };
 
 // The maps shipped in assets/maps. The menu cycles through these.
@@ -213,6 +216,10 @@ class Game {
   Sky sky_;
   Story story_;
   bool storyMode_ = false;
+  // Co-op is story mode hosted for two. The campaign still runs here, on the
+  // host, and its state is handed to the server each tick to be relayed --
+  // the other player has no Story of its own to run.
+  bool coopHost_ = false;
   VehicleSystem vehicles_;
   int drivingVehicle_ = -1;   // index into vehicles_, -1 = on foot
   int enterTimer_ = 0;        // GTJ's entering_car_timer: 60 ticks of door+start

@@ -40,6 +40,12 @@ int main(int argc, char** argv) {
       return (i + 1 < argc) ? argv[++i] : def;
     };
     if (a == "--host") { opts.host = true; opts.skipMenu = true; }
+    else if (a == "--coop") {
+      opts.host = true; opts.hostCoop = true; opts.skipMenu = true;
+    }
+    else if (a == "--duel" || a == "--1v1") {
+      opts.host = true; opts.hostCoop = false; opts.skipMenu = true;
+    }
     else if (a == "--sp" || a == "--singleplayer") {
       opts.singlePlayer = true;
       opts.skipMenu = true;

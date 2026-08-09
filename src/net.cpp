@@ -353,6 +353,22 @@ void Server::Stop() {
   for (ServerSlot& s : slots_) s = ServerSlot{};
 }
 
+void Server::BroadcastStory() {
+  if (!story_.valid) return;
+  Writer w;
+  w.u32(kProtocolId);
+  w.u8(MSG_STORY);
+  w.u8(story_.phase);
+  w.u8(story_.wave);
+  w.u8(story_.lives);
+  w.u8(story_.heavy ? 1 : 0);
+  w.u16(story_.enemiesLeft);
+  w.u16(story_.killed);
+  w.f32(story_.timer);
+  for (const ServerSlot& s : slots_)
+    if (s.used && !s.bot) socket_.Send(s.addr, w.buf, w.len);
+}
+
 int Server::playerCount() const {
   int n = 0;
   for (const ServerSlot& s : slots_) if (s.used) ++n;
@@ -363,6 +379,19 @@ int Server::FindSlot(const Endpoint& e) const {
   for (int i = 0; i < kMaxPlayers; ++i)
     if (slots_[i].used && !slots_[i].bot && slots_[i].addr == e) return i;
   return -1;
+}
+
+void Server::SetCoop(bool on) {
+  coop_ = on;
+  // Re-side everyone currently connected. In co-op every human is team 0 with
+  // the bots on 1; in a duel the humans alternate so the two of you are on
+  // opposite sides and read as different colours.
+  int human = 0;
+  for (ServerSlot& s : slots_) {
+    if (!s.used || s.bot) continue;
+    s.state.team = coop_ ? 0 : static_cast<uint8_t>(human % 2);
+    ++human;
+  }
 }
 
 int Server::AllocSlot() {
@@ -510,6 +539,9 @@ void Server::ApplyBlast(Vector3 pos, float radius, float damage, int owner,
     // out half a wave. It still hurts the thrower, which is what stops them
     // firing a launcher into a wall a foot in front of their face.
     if (ownerIsBot && s.bot && i != owner) continue;
+    // ...and in co-op a human's explosives spare the other human, though not
+    // the thrower, who still has to watch where he puts it.
+    if (coop_ && !ownerIsBot && !s.bot && i != owner) continue;
     const Vector3 center =
         Vector3Add(s.state.pos(), Vector3{0, s.state.height() * 0.5f, 0});
     const float dist = Vector3Distance(center, pos);
@@ -918,6 +950,14 @@ void Server::HandlePacket(const Endpoint& from, const uint8_t* data, int len,
         slots_[slot].state = PlayerState{};
         slots_[slot].state.id = static_cast<uint8_t>(slot);
         slots_[slot].state.active = 1;
+        // Co-op puts every human on team 0 alongside the host; a duel
+        // alternates them so the two players are on opposite sides.
+        if (!coop_) {
+          int human = 0;
+          for (int j = 0; j < slot; ++j)
+            if (slots_[j].used && !slots_[j].bot) ++human;
+          slots_[slot].state.team = static_cast<uint8_t>(human % 2);
+        }
         RespawnPlayer(slot);
         BroadcastRoster();
         TraceLog(LOG_INFO, "SERVER: %s joined as slot %d", from.ToString().c_str(), slot);
@@ -1006,6 +1046,9 @@ void Server::HandlePacket(const Endpoint& from, const uint8_t* data, int len,
       if (target >= kMaxPlayers || !slots_[target].used) return;
       ServerSlot& v = slots_[target];
       if (v.state.dead() || target == slot) return;
+      // Co-op: the two of you are on the same side and cannot shoot each
+      // other. Bots are exempt from this -- they are the opposition.
+      if (coop_ && !v.bot && !slots_[slot].bot) return;
 
       // Sanity: never accept more than the weapon could plausibly do.
       //
@@ -1196,6 +1239,9 @@ void Server::Tick(double now) {
     BroadcastSnapshot();
     BroadcastEvents();
   }
+  // The campaign state changes slowly -- a wave number and a countdown -- so
+  // four times a second is ample and keeps it off the snapshot path.
+  if (tick_ % 15 == 0) BroadcastStory();
 }
 
 // ------------------------------------------------------------------ client
@@ -1247,6 +1293,7 @@ void Client::Disconnect() {
   socket_.Close();
   state_ = IDLE;
   myId_ = -1;
+  story_ = StoryNet{};   // a stale wave banner must not survive the match
 }
 
 void Client::SendInput(const LocalPlayer& lp, uint32_t tick) {
@@ -1333,6 +1380,17 @@ void Client::HandlePacket(const uint8_t* data, int len, double now) {
       }
       for (int i = 0; i < kMaxPlayers; ++i)
         if (!seen[i]) players_[i].active = false;
+      break;
+    }
+    case MSG_STORY: {
+      story_.phase = r.u8();
+      story_.wave = r.u8();
+      story_.lives = r.u8();
+      story_.heavy = r.u8() != 0;
+      story_.enemiesLeft = r.u16();
+      story_.killed = r.u16();
+      story_.timer = r.f32();
+      story_.valid = true;
       break;
     }
     case MSG_SNAPSHOT: {
